@@ -83,9 +83,13 @@ final class NotchWindowController {
             if let notched = NSScreen.screens.first(where: { $0.safeAreaInsets.top > 0 }) {
                 return [notched]
             }
-            return [NSScreen.main].compactMap { $0 }
+            return [NSScreen.screens.first].compactMap { $0 }
         case .mainDisplay:
-            return [NSScreen.main].compactMap { $0 }
+            // `NSScreen.main` is the screen with the focused window; for a
+            // menu-bar app that's effectively wherever the cursor is, not the
+            // primary display the user picked in System Settings. The primary
+            // is always `NSScreen.screens.first`.
+            return [NSScreen.screens.first].compactMap { $0 }
         }
     }
 

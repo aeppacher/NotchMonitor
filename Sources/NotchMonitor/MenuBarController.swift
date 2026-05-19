@@ -96,6 +96,25 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
+        // Activity window — how far back to look for "active" sessions.
+        let activityHeader = NSMenuItem(title: "Track Sessions From", action: nil, keyEquivalent: "")
+        activityHeader.isEnabled = false
+        menu.addItem(activityHeader)
+        let currentWindow = AppSettings.shared.activityWindow
+        for win in ActivityWindow.allCases {
+            let item = NSMenuItem(
+                title: win.label,
+                action: #selector(setActivityWindow(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = win.rawValue
+            item.state = (win == currentWindow) ? .on : .off
+            menu.addItem(item)
+        }
+
+        menu.addItem(NSMenuItem.separator())
+
         // Monitor SSH Connections submenu — opt-in list of remote hosts to poll.
         let hostsItem = NSMenuItem(title: "Monitor SSH Connections", action: nil, keyEquivalent: "")
         let hostsSubmenu = NSMenu()
@@ -147,6 +166,12 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             let placement = (item.representedObject as? String).flatMap(DisplayPlacement.init(rawValue:))
             item.state = (placement == currentPlacement) ? .on : .off
         }
+        // Refresh activity-window radio.
+        let currentWindow = AppSettings.shared.activityWindow
+        for item in menu.items where item.action == #selector(setActivityWindow(_:)) {
+            let win = (item.representedObject as? Int).flatMap(ActivityWindow.init(rawValue:))
+            item.state = (win == currentWindow) ? .on : .off
+        }
     }
 
     @objc private func setPlacement(_ sender: NSMenuItem) {
@@ -154,6 +179,13 @@ final class MenuBarController: NSObject, NSMenuDelegate {
               let placement = DisplayPlacement(rawValue: raw)
         else { return }
         AppSettings.shared.displayPlacement = placement
+    }
+
+    @objc private func setActivityWindow(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? Int,
+              let win = ActivityWindow(rawValue: raw)
+        else { return }
+        AppSettings.shared.activityWindow = win
     }
 
     // MARK: - Monitor Hosts submenu

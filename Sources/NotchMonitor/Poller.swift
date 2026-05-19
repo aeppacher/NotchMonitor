@@ -186,7 +186,8 @@ printf '\n'
 # already parsed, Swift sends the mtime it cached. We re-tail only files
 # whose remote mtime advances past that. Unknown files always get tailed.
 : "${KNOWN_MTIMES:=}"
-find "$DIR" -mindepth 2 -maxdepth 2 -type f -name '*.jsonl' -mmin -60 2>/dev/null | while read -r f; do
+: "${WINDOW_MIN:=60}"
+find "$DIR" -mindepth 2 -maxdepth 2 -type f -name '*.jsonl' -mmin "-$WINDOW_MIN" 2>/dev/null | while read -r f; do
   mt=$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null)
   rel="${f#$DIR/}"
   # Look up cached mtime for this rel in KNOWN_MTIMES (if any).
@@ -207,8 +208,6 @@ find "$DIR" -mindepth 2 -maxdepth 2 -type f -name '*.jsonl' -mmin -60 2>/dev/nul
 done
 """##
 
-private let stalenessWindow: TimeInterval = 60 * 60
-
 final class Poller {
     private let interval: TimeInterval
     private let bridge: SSHBridge
@@ -228,6 +227,12 @@ final class Poller {
         t.setEventHandler { [weak self] in self?.tick() }
         timer = t
         t.resume()
+    }
+
+    /// Force an immediate poll. Cheap because per-host re-entrancy guards
+    /// will skip hosts that already have a tick in flight.
+    func reloadNow() {
+        queue.async { [weak self] in self?.tick() }
     }
 
     /// Per-host last-known snapshots. We keep these around so a single failed
@@ -267,6 +272,12 @@ final class Poller {
         var perHostError: [String: String] = [:]
         var perHostState: [String: HostState] = [:]
         var perHostTotals: [String: DailyTotals] = [:]
+
+        // Snapshot once per tick so all hosts use a consistent window even if
+        // the user flips the setting mid-tick.
+        let window = AppSettings.shared.activityWindow
+        let windowSeconds = window.seconds
+        let windowMinutes = window.minutes
 
         // Mark not-yet-seen hosts as connecting on the first time we touch them.
         var publishedInitialConnecting = false
@@ -318,12 +329,12 @@ final class Poller {
                     .joined(separator: ":")
                 // Quote because rels contain `-` and other shell-safe chars
                 // but never `'` (they're filesystem paths Claude Code wrote).
-                let cmd = "KNOWN_MTIMES='\(known)' " + remoteScript
+                let cmd = "KNOWN_MTIMES='\(known)' WINDOW_MIN=\(windowMinutes) " + remoteScript
                 // Generous: cold SSH connect to corp dev hosts can take 3-4s
                 // and the script does install + tail work on first run.
                 switch self.bridge.run(host: host, command: cmd, timeout: 25) {
                 case .success(let out):
-                    let (snaps, remoteState, totals) = self.parse(output: out, host: host)
+                    let (snaps, remoteState, totals) = self.parse(output: out, host: host, stalenessWindow: windowSeconds)
                     resultsLock.lock()
                     perHostSnapshots[host.alias] = snaps
                     perHostTotals[host.alias] = totals
@@ -420,7 +431,7 @@ final class Poller {
         }
     }
 
-    private func parse(output: String, host: DetectedHost) -> ([SessionSnapshot], HostState?, DailyTotals) {
+    private func parse(output: String, host: DetectedHost, stalenessWindow: TimeInterval) -> ([SessionSnapshot], HostState?, DailyTotals) {
         var snapshots: [SessionSnapshot] = []
         var currentRel: String?
         var currentMTime: Date = Date()

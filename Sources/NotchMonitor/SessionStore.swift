@@ -125,6 +125,22 @@ final class SessionStore: ObservableObject {
     @Published var hosts: [HostStatus] = []
     @Published var todayTotals: DailyTotals = DailyTotals(tokensAllTime: 0, tokensLast24h: 0)
 
+    /// Force an immediate poll across every host. Wired to the Poller in
+    /// AppDelegate so the UI doesn't need to know about it directly.
+    var onReloadAll: (() -> Void)?
+    /// Sessions the user has explicitly dismissed, mapped to the
+    /// `lastMessageAt` value at the time of dismissal. The session stays
+    /// hidden until a poll observes a strictly newer `lastMessageAt`, at
+    /// which point the entry is cleared and the row reappears.
+    private var dismissedAt: [String: Date] = [:]
+
+    /// Hide a session from the UI until it next receives an update.
+    func dismissSession(id: String) {
+        guard let snap = sessions.first(where: { $0.id == id }) else { return }
+        dismissedAt[id] = snap.lastMessageAt
+        sessions.removeAll { $0.id == id }
+    }
+
     var aggregateActivity: SessionActivity {
         sessions.map { $0.activity }
             .max(by: { $0.priority < $1.priority }) ?? .idle
@@ -141,7 +157,23 @@ final class SessionStore: ObservableObject {
 
     func update(_ snapshots: [SessionSnapshot], connected: Bool, error: String?, hosts: [HostStatus], todayTotals: DailyTotals) {
         self.todayTotals = todayTotals
-        self.sessions = snapshots.sorted { $0.lastMessageAt > $1.lastMessageAt }
+        // Filter out dismissed sessions whose lastMessageAt hasn't advanced
+        // past the moment the user dismissed them. Once an update arrives,
+        // drop the dismissal so the row is shown again.
+        let visible = snapshots.filter { snap in
+            guard let dismissedTime = dismissedAt[snap.id] else { return true }
+            if snap.lastMessageAt > dismissedTime {
+                dismissedAt.removeValue(forKey: snap.id)
+                return true
+            }
+            return false
+        }
+        // Garbage-collect dismissals for sessions no longer present at all
+        // (e.g. aged out of the 60-min window) so the dict doesn't grow.
+        let presentIds = Set(snapshots.map(\.id))
+        dismissedAt = dismissedAt.filter { presentIds.contains($0.key) }
+
+        self.sessions = visible.sorted { $0.lastMessageAt > $1.lastMessageAt }
         self.connected = connected
         self.lastError = error
         self.hasPolled = true

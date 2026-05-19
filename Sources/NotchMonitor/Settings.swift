@@ -1,5 +1,24 @@
 import Foundation
 
+/// How far back to look for "active" sessions. Sessions whose most recent
+/// message is older than this drop out of the HUD entirely.
+enum ActivityWindow: Int, CaseIterable {
+    case oneHour = 1
+    case threeHours = 3
+    case eightHours = 8
+
+    var label: String {
+        switch self {
+        case .oneHour:    return "Last 1 hour"
+        case .threeHours: return "Last 3 hours"
+        case .eightHours: return "Last 8 hours"
+        }
+    }
+
+    var seconds: TimeInterval { TimeInterval(rawValue * 3600) }
+    var minutes: Int { rawValue * 60 }
+}
+
 /// Where the HUD should appear.
 enum DisplayPlacement: String, CaseIterable {
     /// Whichever screen is currently the user's "main" — the one with the
@@ -28,6 +47,18 @@ final class AppSettings {
 
     private let displayKey = "displayPlacement"
     private let hostsKey = "enabledRemoteHosts"
+    private let activityWindowKey = "activityWindowHours"
+
+    var activityWindow: ActivityWindow {
+        get {
+            let raw = UserDefaults.standard.integer(forKey: activityWindowKey)
+            return ActivityWindow(rawValue: raw) ?? .threeHours
+        }
+        set {
+            UserDefaults.standard.set(newValue.rawValue, forKey: activityWindowKey)
+            NotificationCenter.default.post(name: Self.didChangeNotification, object: nil)
+        }
+    }
 
     var displayPlacement: DisplayPlacement {
         get {

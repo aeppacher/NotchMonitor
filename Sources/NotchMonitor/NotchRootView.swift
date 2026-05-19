@@ -355,19 +355,29 @@ struct ExpandedHeader: View {
     var body: some View {
         HStack(spacing: 8) {
             ActivityDot(activity: store.aggregateActivity)
-            Text("Sessions")
+            Text("NotchMonitor")
                 .font(.system(size: 14, weight: .semibold, design: .rounded))
                 .foregroundStyle(.white)
             Spacer()
             VStack(alignment: .trailing, spacing: 1) {
-                Text("\(formatTokens(store.todayTotals.tokensLast24h)) today")
-                    .help("Tokens used in the last 24 hours, across all hosts")
-                Text("\(formatTokens(store.todayTotals.tokensAllTime)) all-time")
-                    .help("Lifetime tokens used, across all hosts")
+                Text("\(store.sessions.count) active session\(store.sessions.count == 1 ? "" : "s")")
+                    .help("Sessions with activity in the last \(AppSettings.shared.activityWindow.rawValue) hour\(AppSettings.shared.activityWindow.rawValue == 1 ? "" : "s"), across all hosts")
+                Text("v\(UpdateChecker.currentVersion)")
                     .foregroundStyle(.white.opacity(0.5))
             }
             .font(.system(size: 11, weight: .medium, design: .rounded))
             .foregroundStyle(.white.opacity(0.7))
+            Button {
+                store.onReloadAll?()
+            } label: {
+                Image(systemName: "arrow.clockwise")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.7))
+                    .padding(5)
+                    .background(Circle().fill(Color.white.opacity(0.08)))
+            }
+            .buttonStyle(.plain)
+            .help("Force a refresh across every host")
         }
     }
 }
@@ -386,7 +396,9 @@ private struct ExpandedView: View {
             } else {
                 VStack(spacing: 8) {
                     ForEach(groupedSessions(store.sessions), id: \.key) { group in
-                        ProjectCard(group: group)
+                        ProjectCard(group: group, onDismiss: { sid in
+                            store.dismissSession(id: sid)
+                        })
                     }
                 }
             }
@@ -484,6 +496,7 @@ func groupedSessions(_ sessions: [SessionSnapshot]) -> [SessionGroup] {
 
 private struct ProjectCard: View {
     let group: SessionGroup
+    let onDismiss: (_ sessionId: String) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -527,7 +540,7 @@ private struct ProjectCard: View {
             // Per-session sub-rows.
             VStack(spacing: 6) {
                 ForEach(group.sessions) { s in
-                    SessionStatRow(session: s)
+                    SessionStatRow(session: s, onDismiss: onDismiss)
                 }
             }
         }
@@ -542,6 +555,7 @@ private struct ProjectCard: View {
 
 private struct SessionStatRow: View {
     let session: SessionSnapshot
+    let onDismiss: (_ sessionId: String) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
@@ -566,6 +580,16 @@ private struct SessionStatRow: View {
                 Text(contextLabel)
                     .font(.system(size: 11, weight: .medium, design: .monospaced))
                     .foregroundStyle(.white.opacity(0.65))
+
+                Button {
+                    onDismiss(session.id)
+                } label: {
+                    Image(systemName: "trash")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.6))
+                }
+                .buttonStyle(.plain)
+                .help("Hide this session until it next updates")
             }
 
             // Line 2: full token breakdown — input / output / cache-read /

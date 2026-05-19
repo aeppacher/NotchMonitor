@@ -26,8 +26,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menuBar = MenuBarController(updateChecker: updateChecker)
 
         let bridge = SSHBridge()
-        poller = Poller(interval: 1.0, bridge: bridge, store: store)
-        poller?.start()
+        let poller = Poller(interval: 1.0, bridge: bridge, store: store)
+        self.poller = poller
+        store.onReloadAll = { [weak poller] in poller?.reloadNow() }
+        poller.start()
 
         updateChecker.start()
     }

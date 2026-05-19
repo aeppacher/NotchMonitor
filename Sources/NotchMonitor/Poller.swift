@@ -374,13 +374,19 @@ final class Poller {
                 anyConnected = true
             } else if perHostError[host.alias] != nil ||
                       inFlightHosts.contains(host.alias) {
-                if let err = perHostError[host.alias] { lastErr = err }
+                // Only surface the error to the UI when we have no fresh
+                // cache to fall back on. Transient failures (Bad file
+                // descriptor from Pipe teardown races, JSONL rotation
+                // mid-cat, etc.) should be silent if the previous tick's
+                // data is still recent — the next tick almost always
+                // succeeds.
                 if let lastAt = lastSuccessByHost[host.alias],
                    Date().timeIntervalSince(lastAt) <= Self.hostStaleAfter,
                    let cached = lastSnapshotsByHost[host.alias] {
                     allSnapshots.append(contentsOf: cached)
                     anyConnected = true
                 } else {
+                    if let err = perHostError[host.alias] { lastErr = err }
                     lastSnapshotsByHost.removeValue(forKey: host.alias)
                 }
             } else {

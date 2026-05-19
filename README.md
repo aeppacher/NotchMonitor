@@ -3,6 +3,10 @@
 A notch-anchored HUD for macOS that shows live Claude Code session status —
 locally and on remote machines you SSH into.
 
+![Collapsed](screenshots/collapsed.png)
+
+![Expanded](screenshots/expanded.png)
+
 ## Install
 
 1. **Download** the latest `NotchMonitor.zip` from the

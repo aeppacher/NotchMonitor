@@ -17,7 +17,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         let home = FileManager.default.homeDirectoryForCurrentUser
         return home
             .appendingPathComponent("Library/LaunchAgents")
-            .appendingPathComponent("com.eppacher.claudenotch.plist")
+            .appendingPathComponent("com.eppacher.notchmonitor.plist")
     }()
 
     init(updateChecker: UpdateChecker) {
@@ -41,12 +41,12 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         // SF Symbol that visually echoes the notch HUD.
         let img = NSImage(
             systemSymbolName: "rectangle.dashed",
-            accessibilityDescription: "ClaudeNotch"
+            accessibilityDescription: "NotchMonitor"
         )
         img?.isTemplate = true
         button.image = img
         button.imagePosition = .imageOnly
-        button.toolTip = "ClaudeNotch"
+        button.toolTip = "NotchMonitor"
     }
 
     private func buildMenu() {
@@ -57,7 +57,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         // "dev" for unbundled `swift run` launches.
         let versionLabel: String = {
             let v = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
-            return "ClaudeNotch \(v ?? "dev")"
+            return "NotchMonitor \(v ?? "dev")"
         }()
         let versionItem = NSMenuItem(title: versionLabel, action: nil, keyEquivalent: "")
         versionItem.isEnabled = false
@@ -96,6 +96,17 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
+        // Monitor SSH Connections submenu — opt-in list of remote hosts to poll.
+        let hostsItem = NSMenuItem(title: "Monitor SSH Connections", action: nil, keyEquivalent: "")
+        let hostsSubmenu = NSMenu()
+        hostsSubmenu.delegate = self
+        hostsSubmenu.identifier = NSUserInterfaceItemIdentifier("hosts-submenu")
+        rebuildHostsSubmenu(hostsSubmenu)
+        hostsItem.submenu = hostsSubmenu
+        menu.addItem(hostsItem)
+
+        menu.addItem(NSMenuItem.separator())
+
         let toggle = NSMenuItem(
             title: "Start at Login",
             action: #selector(toggleLoginItem(_:)),
@@ -108,7 +119,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         menu.addItem(NSMenuItem.separator())
 
         let quit = NSMenuItem(
-            title: "Quit ClaudeNotch",
+            title: "Quit NotchMonitor",
             action: #selector(quit(_:)),
             keyEquivalent: "q"
         )
@@ -119,6 +130,12 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     }
 
     func menuWillOpen(_ menu: NSMenu) {
+        // Hosts submenu: rebuild every time it opens so newly-added entries
+        // in ~/.ssh/config show up without restarting the app.
+        if menu.identifier == NSUserInterfaceItemIdentifier("hosts-submenu") {
+            rebuildHostsSubmenu(menu)
+            return
+        }
         // Refresh the toggle state in case the plist was added/removed
         // outside the app (e.g. via System Settings or by hand).
         if let toggle = menu.items.first(where: { $0.action == #selector(toggleLoginItem(_:)) }) {
@@ -139,12 +156,72 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         AppSettings.shared.displayPlacement = placement
     }
 
+    // MARK: - Monitor Hosts submenu
+
+    private func rebuildHostsSubmenu(_ submenu: NSMenu) {
+        submenu.removeAllItems()
+        let candidates = HostDiscovery.candidateAliases()
+        let enabled = AppSettings.shared.enabledRemoteHosts
+
+        if candidates.isEmpty {
+            let empty = NSMenuItem(title: "No SSH hosts found in ~/.ssh/config", action: nil, keyEquivalent: "")
+            empty.isEnabled = false
+            submenu.addItem(empty)
+            return
+        }
+
+        for alias in candidates {
+            let item = NSMenuItem(
+                title: alias,
+                action: #selector(toggleHost(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = alias
+            item.state = enabled.contains(alias) ? .on : .off
+            submenu.addItem(item)
+        }
+
+        // Trailing items: select-all / clear-all for convenience.
+        submenu.addItem(NSMenuItem.separator())
+        let enableAll = NSMenuItem(
+            title: "Enable All",
+            action: #selector(enableAllHosts(_:)),
+            keyEquivalent: ""
+        )
+        enableAll.target = self
+        submenu.addItem(enableAll)
+
+        let disableAll = NSMenuItem(
+            title: "Disable All",
+            action: #selector(disableAllHosts(_:)),
+            keyEquivalent: ""
+        )
+        disableAll.target = self
+        submenu.addItem(disableAll)
+    }
+
+    @objc private func toggleHost(_ sender: NSMenuItem) {
+        guard let alias = sender.representedObject as? String else { return }
+        let isOn = sender.state == .on
+        AppSettings.shared.setHostEnabled(alias, enabled: !isOn)
+        sender.state = isOn ? .off : .on
+    }
+
+    @objc private func enableAllHosts(_ sender: NSMenuItem) {
+        AppSettings.shared.enabledRemoteHosts = Set(HostDiscovery.candidateAliases())
+    }
+
+    @objc private func disableAllHosts(_ sender: NSMenuItem) {
+        AppSettings.shared.enabledRemoteHosts = []
+    }
+
     private var isLoginItemEnabled: Bool {
         FileManager.default.fileExists(atPath: launchAgentURL.path)
     }
 
     /// Resolves the path the LaunchAgent should launch.
-    /// - Bundled launch (`/path/ClaudeNotch.app/Contents/MacOS/ClaudeNotch`):
+    /// - Bundled launch (`/path/NotchMonitor.app/Contents/MacOS/NotchMonitor`):
     ///   we want the `.app` path so launchd can `open` it.
     /// - Unbundled (`swift run`): `Bundle.main.bundleURL` returns the build
     ///   *directory*, not the binary; we have to use `executablePath`.
@@ -186,7 +263,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
                 _ = runLaunchctl(["load", launchAgentURL.path])
             }
         } catch {
-            NSLog("[claude-notch] login-item toggle failed: %@", "\(error)")
+            NSLog("[notch-monitor] login-item toggle failed: %@", "\(error)")
             let alert = NSAlert()
             alert.messageText = "Couldn't change login-item setting"
             alert.informativeText = "\(error.localizedDescription)\n\nLaunchAgent path:\n\(launchAgentURL.path)"
@@ -213,7 +290,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             : [target.path]
 
         let dict: [String: Any] = [
-            "Label": "com.eppacher.claudenotch",
+            "Label": "com.eppacher.notchmonitor",
             "ProgramArguments": args,
             "RunAtLoad": true,
             "KeepAlive": false,
@@ -261,19 +338,19 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             // Compose the base symbol with a small filled circle in the
             // bottom-right to indicate a pending update.
             let base = NSImage(systemSymbolName: "rectangle.dashed",
-                               accessibilityDescription: "ClaudeNotch")
+                               accessibilityDescription: "NotchMonitor")
             let badged = NSImage(systemSymbolName: "rectangle.dashed.badge.record",
-                                 accessibilityDescription: "ClaudeNotch — update available")
+                                 accessibilityDescription: "NotchMonitor — update available")
             let img = badged ?? base
             img?.isTemplate = true
             button.image = img
-            button.toolTip = "ClaudeNotch — update available"
+            button.toolTip = "NotchMonitor — update available"
         } else {
             let img = NSImage(systemSymbolName: "rectangle.dashed",
-                              accessibilityDescription: "ClaudeNotch")
+                              accessibilityDescription: "NotchMonitor")
             img?.isTemplate = true
             button.image = img
-            button.toolTip = "ClaudeNotch"
+            button.toolTip = "NotchMonitor"
         }
     }
 
@@ -291,7 +368,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
                 } else {
                     let alert = NSAlert()
                     alert.messageText = "You're up to date"
-                    alert.informativeText = "ClaudeNotch \(UpdateChecker.currentVersion) is the latest version."
+                    alert.informativeText = "NotchMonitor \(UpdateChecker.currentVersion) is the latest version."
                     alert.runModal()
                 }
             }
@@ -300,7 +377,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     private func promptInstall(update: AvailableUpdate) {
         let alert = NSAlert()
-        alert.messageText = "ClaudeNotch \(update.tag) is available"
+        alert.messageText = "NotchMonitor \(update.tag) is available"
         alert.informativeText = "You're running \(UpdateChecker.currentVersion). Install and relaunch?"
         alert.addButton(withTitle: "Install & Relaunch")
         alert.addButton(withTitle: "View on GitHub")

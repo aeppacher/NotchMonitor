@@ -1,7 +1,7 @@
 #!/bin/bash
-# Build ClaudeNotch.app — an unsigned macOS .app bundle ready to share.
+# Build NotchMonitor.app — an unsigned macOS .app bundle ready to share.
 #
-# Output: dist/ClaudeNotch.app  and  dist/ClaudeNotch.zip
+# Output: dist/NotchMonitor.app  and  dist/NotchMonitor.zip
 #
 # Recipients: right-click the .app → Open (Gatekeeper will warn the first time
 # because the bundle is ad-hoc signed, not notarized). Subsequent launches
@@ -11,8 +11,8 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-APP_NAME="ClaudeNotch"
-BUNDLE_ID="com.eppacher.claudenotch"
+APP_NAME="NotchMonitor"
+BUNDLE_ID="com.eppacher.notchmonitor"
 VERSION="${VERSION:-0.1.0}"
 BUILD_NUMBER="${BUILD_NUMBER:-$(date +%Y%m%d%H%M)}"
 
@@ -23,9 +23,9 @@ MACOS="$CONTENTS/MacOS"
 RES="$CONTENTS/Resources"
 
 echo "==> Generating app icon"
-swiftc -O scripts/make-icon.swift -o /tmp/claude-notch-make-icon
+swiftc -O scripts/make-icon.swift -o /tmp/notch-monitor-make-icon
 mkdir -p resources
-/tmp/claude-notch-make-icon
+/tmp/notch-monitor-make-icon
 
 echo "==> Building release binary"
 swift build -c release
@@ -49,7 +49,7 @@ cat > "$CONTENTS/Info.plist" <<PLIST
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key><string>$APP_NAME</string>
-    <key>CFBundleDisplayName</key><string>Claude Notch</string>
+    <key>CFBundleDisplayName</key><string>Notch Monitor</string>
     <key>CFBundleExecutable</key><string>$APP_NAME</string>
     <key>CFBundleIdentifier</key><string>$BUNDLE_ID</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
@@ -93,7 +93,7 @@ echo "  App:  $APP"
 echo "  Zip:  $ZIP  ($SIZE)"
 echo
 echo "To share: send the zip. After download, recipients should run:"
-echo "    xattr -dr com.apple.quarantine /Applications/ClaudeNotch.app"
-echo "    open /Applications/ClaudeNotch.app"
+echo "    xattr -dr com.apple.quarantine /Applications/NotchMonitor.app"
+echo "    open /Applications/NotchMonitor.app"
 echo "(One-time setup — clears the browser-added quarantine flag so macOS"
 echo "doesn't refuse to launch the unsigned bundle.)"

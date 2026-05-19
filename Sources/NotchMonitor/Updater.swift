@@ -17,7 +17,7 @@ final class Updater {
             case .noBundlePath:           return "Couldn't determine the running app's bundle path."
             case .downloadFailed(let s):  return "Download failed: \(s)"
             case .unzipFailed(let c, let s): return "Unzip exited \(c): \(s)"
-            case .bundleNotFound:         return "Couldn't find ClaudeNotch.app in the downloaded zip."
+            case .bundleNotFound:         return "Couldn't find NotchMonitor.app in the downloaded zip."
             }
         }
     }
@@ -45,11 +45,11 @@ final class Updater {
 
         // 2. Set up a working directory.
         let workDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("claude-notch-update-\(UUID().uuidString.prefix(8))")
+            .appendingPathComponent("notch-monitor-update-\(UUID().uuidString.prefix(8))")
         try FileManager.default.createDirectory(at: workDir, withIntermediateDirectories: true)
 
         // 3. Download the zip synchronously. It's small (~250KB).
-        let zipURL = workDir.appendingPathComponent("ClaudeNotch.zip")
+        let zipURL = workDir.appendingPathComponent("NotchMonitor.zip")
         try downloadFile(from: update.zipURL, to: zipURL)
 
         // 4. Unzip it.
@@ -67,7 +67,7 @@ final class Updater {
             throw UpdaterError.unzipFailed(unzip.terminationStatus, err)
         }
 
-        // 5. Locate ClaudeNotch.app inside the unzipped tree.
+        // 5. Locate NotchMonitor.app inside the unzipped tree.
         guard let newBundle = Self.findApp(in: unzipDir) else {
             throw UpdaterError.bundleNotFound
         }
@@ -78,7 +78,7 @@ final class Updater {
         let script = """
         #!/bin/bash
         set -e
-        # Wait for the running ClaudeNotch (PID \(pid)) to exit.
+        # Wait for the running NotchMonitor (PID \(pid)) to exit.
         for _ in $(seq 1 50); do
             if ! /bin/ps -p \(pid) > /dev/null; then break; fi
             /bin/sleep 0.1
@@ -125,7 +125,7 @@ final class Updater {
         // Use a sync download via dispatch group — we're already off the main
         // queue, so blocking here is fine.
         var req = URLRequest(url: src)
-        req.setValue("ClaudeNotch/\(UpdateChecker.currentVersion)", forHTTPHeaderField: "User-Agent")
+        req.setValue("NotchMonitor/\(UpdateChecker.currentVersion)", forHTTPHeaderField: "User-Agent")
         let group = DispatchGroup()
         var capturedError: Error?
         var capturedData: Data?

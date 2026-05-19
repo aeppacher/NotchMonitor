@@ -3,7 +3,7 @@ import Foundation
 struct AvailableUpdate: Equatable {
     let tag: String              // e.g. "v0.6.0"
     let versionString: String    // e.g. "0.6.0" — strips leading 'v'
-    let zipURL: URL              // direct download URL for ClaudeNotch.zip
+    let zipURL: URL              // direct download URL for NotchMonitor.zip
     let releasePageURL: URL      // human-friendly GitHub releases page
     let publishedAt: Date?
 
@@ -16,7 +16,7 @@ struct AvailableUpdate: Equatable {
 /// Posts `Notification.Name.updateAvailable` whenever a newer version is found
 /// than the running bundle.
 final class UpdateChecker {
-    static let updateAvailable = Notification.Name("ClaudeNotch.updateAvailable")
+    static let updateAvailable = Notification.Name("NotchMonitor.updateAvailable")
 
     private let owner = "aeppacher"
     private let repo = "NotchMonitor"
@@ -46,21 +46,21 @@ final class UpdateChecker {
         let url = URL(string: "https://api.github.com/repos/\(owner)/\(repo)/releases/latest")!
         var req = URLRequest(url: url)
         // GitHub recommends a UA + Accept header for API calls.
-        req.setValue("ClaudeNotch/\(Self.currentVersion)", forHTTPHeaderField: "User-Agent")
+        req.setValue("NotchMonitor/\(Self.currentVersion)", forHTTPHeaderField: "User-Agent")
         req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         req.timeoutInterval = 10
 
         URLSession.shared.dataTask(with: req) { [weak self] data, response, error in
             guard let self = self else { return }
             if let error = error {
-                NSLog("[claude-notch] update check failed: %@", "\(error)")
+                NSLog("[notch-monitor] update check failed: %@", "\(error)")
                 return
             }
             guard let data = data,
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let tag = json["tag_name"] as? String
             else {
-                NSLog("[claude-notch] update check: no tag in response")
+                NSLog("[notch-monitor] update check: no tag in response")
                 return
             }
             let assets = (json["assets"] as? [[String: Any]]) ?? []
@@ -69,7 +69,7 @@ final class UpdateChecker {
             guard let zipURLString = zipAsset?["browser_download_url"] as? String,
                   let zipURL = URL(string: zipURLString)
             else {
-                NSLog("[claude-notch] update check: no zip asset on release \(tag)")
+                NSLog("[notch-monitor] update check: no zip asset on release \(tag)")
                 return
             }
             let pageURL = (json["html_url"] as? String).flatMap { URL(string: $0) }

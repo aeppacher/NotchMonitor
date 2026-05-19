@@ -1,7 +1,43 @@
-# ClaudeNotch
+# NotchMonitor
 
 A notch-anchored HUD for macOS that shows live Claude Code session status —
 locally and on remote machines you SSH into.
+
+## Install
+
+1. **Download** the latest `NotchMonitor.zip` from the
+   [GitHub releases page](https://github.com/aeppacher/NotchMonitor/releases/latest).
+2. **Unzip** it (Finder will do this automatically on most browsers).
+3. **Move** `NotchMonitor.app` to `/Applications`.
+4. **Clear quarantine and launch** — open Terminal and run:
+   ```sh
+   xattr -dr com.apple.quarantine /Applications/NotchMonitor.app
+   open /Applications/NotchMonitor.app
+   ```
+   Without the `xattr` step, Gatekeeper refuses to launch the unsigned bundle
+   and shows *"NotchMonitor can't be opened because it can't be verified."*
+   (This is a one-time gate — the in-app auto-updater handles quarantine on
+   future updates.)
+
+After first launch, look for a small dashed-rectangle icon in your menu bar.
+Click it for the menu:
+
+- **Notch on Main / Laptop / All Displays** — pick where the HUD appears.
+- **Monitor SSH Connections** — opt in to polling specific remote hosts (off
+  by default; only `local` is monitored until you check something).
+- **Start at Login** — auto-launch on next login.
+- **Check for Updates…** — manually poll GitHub for a newer release.
+- **Quit NotchMonitor**.
+
+If you're enabling SSH monitoring, the remote host(s) need:
+- Key-based SSH auth working (no password prompts).
+- Claude Code installed and run there at least once.
+- `python3` available (used for one-time hook installation).
+
+The first poll on a remote host writes a small set of `~/.claude/settings.json`
+hooks (idempotent, only adds entries that point at NotchMonitor's marker
+scripts). These are what let the HUD detect "Claude is blocked on a permission
+prompt right now."
 
 ## What it shows
 
@@ -18,9 +54,11 @@ a colored badge with the count.
 | pink   | awaiting input  | Permission prompt is open OR `AskUserQuestion`/`ExitPlanMode`.|
 | gray   | idle            | Nothing happening; turn ended; or session went stale.         |
 
-**Expanded** (click or hover for ½s): a per-project card with each session's
-model, state, context-window usage bar, token breakdown, and estimated USD
-cost. Footer shows per-host connection state.
+**Expanded** (click or hover for ½s): per-project cards with each session's
+model, state, context-window usage bar, and full token breakdown
+(input / output / cache-read / cache-write). Header shows token totals for
+the last 24 hours and lifetime, summed from `~/.claude/stats-cache.json`
+across every monitored host. Footer shows per-host connection state.
 
 ## Build and run
 
@@ -30,42 +68,52 @@ cost. Footer shows per-host connection state.
 swift run
 ```
 
-Runs against `~/.claude/projects/` and any SSH hosts with a `dev-dsk*` alias.
 Quit with the menu-bar icon → Quit, or Ctrl-C in the terminal.
 
 ### Build a shareable `.app`
 
 ```sh
-VERSION=0.4.0 ./scripts/build-app.sh
+VERSION=0.6.0 ./scripts/build-app.sh
 ```
 
 This:
 
 1. Compiles the icon (`scripts/make-icon.swift` → `resources/AppIcon.icns`).
 2. Builds the release binary (`swift build -c release`).
-3. Assembles `dist/ClaudeNotch.app` with a generated `Info.plist`.
+3. Assembles `dist/NotchMonitor.app` with a generated `Info.plist`.
 4. Ad-hoc codesigns it.
-5. Zips it to `dist/ClaudeNotch.zip`.
+5. Zips it to `dist/NotchMonitor.zip`.
 
 `VERSION` defaults to `0.1.0`; override per release. The bundle identifier
-(`com.eppacher.claudenotch`) is constant, so installing a new build over an
+(`com.eppacher.notchmonitor`) is constant, so installing a new build over an
 old one is a normal in-place update — macOS treats them as the same app.
+
+### Cut a GitHub release
+
+```sh
+./scripts/release.sh v0.6.0 "summary of changes"
+```
+
+This builds, tags, pushes the tag, and uploads `dist/NotchMonitor.zip` as a
+release asset on GitHub via the `gh` CLI. The running app's auto-updater polls
+GitHub Releases and offers a one-click "Install & Relaunch" when a newer
+version is published.
 
 ### Distribute
 
-Send `dist/ClaudeNotch.zip`. Recipients:
+Send `dist/NotchMonitor.zip`. Recipients:
 
 1. Unzip it.
-2. Drag `ClaudeNotch.app` to `/Applications` (recommended — cleaner login-item
+2. Drag `NotchMonitor.app` to `/Applications` (recommended — cleaner login-item
    path, fewer Gatekeeper friction points).
 3. **First launch only:** clear the quarantine flag the browser added on
    download, then open:
    ```sh
-   xattr -dr com.apple.quarantine /Applications/ClaudeNotch.app
-   open /Applications/ClaudeNotch.app
+   xattr -dr com.apple.quarantine /Applications/NotchMonitor.app
+   open /Applications/NotchMonitor.app
    ```
    Without this, Gatekeeper refuses to launch the unsigned bundle and shows
-   "ClaudeNotch can't be opened because it can't be verified."
+   "NotchMonitor can't be opened because it can't be verified."
 4. Subsequent launches: double-click normally.
 
 The auto-updater handles the quarantine flag on its own — every in-app update
@@ -94,37 +142,47 @@ worth knowing:
 
 ## Menu-bar item
 
-A second status item appears in the menu bar with three entries:
+A status item appears in the menu bar with these entries:
 
-- **ClaudeNotch *version*** — disabled header showing the build version.
+- **NotchMonitor *version*** — disabled header showing the build version.
+- **Check for Updates… / Install Update *vX.Y.Z*…** — manual update trigger;
+  text changes when a newer release is on GitHub.
+- **Notch on Main Display / Laptop Display / All Displays** — radio group
+  controlling which screens render a HUD.
+- **Monitor SSH Connections** — submenu listing every alias from
+  `~/.ssh/config` (and any seen in VSCode Remote storage). Click an alias to
+  toggle monitoring; default state is local-only.
 - **Start at Login** — toggles a LaunchAgent at
-  `~/Library/LaunchAgents/com.eppacher.claudenotch.plist` that runs
-  `open -a /Applications/ClaudeNotch.app` at login. Visible in
+  `~/Library/LaunchAgents/com.eppacher.notchmonitor.plist` that runs
+  `open -a /Applications/NotchMonitor.app` at login. Visible in
   *System Settings → General → Login Items → Allow in the Background*
   (not the top "Open at Login" list — that's reserved for SMAppService apps,
   which require Developer ID signing).
-- **Quit ClaudeNotch** — terminates the app.
+- **Quit NotchMonitor** — terminates the app.
 
 ## How polling works
 
-`Poller` ticks every 1 second, fanning out across `local` and any discovered
+`Poller` ticks every 1 second, fanning out across `local` and any user-enabled
 SSH hosts concurrently on a global utility queue. Each tick:
 
 1. Runs a small shell script on the host (locally or via SSH).
 2. Script lists JSONL files in `~/.claude/projects/` touched in the last
-   60 minutes, plus `===META===` mtime entries for files we've already
-   parsed and `===FILE===` blocks (full `cat`) for files newer than
-   our cached mtime. Differential streaming keeps SSH bytes low.
-3. Script also installs a one-shot pair of hooks on first run
+   60 minutes, emitting `===META===` mtime entries for files we've already
+   parsed and `===FILE===` blocks (full `cat`) for files newer than our
+   cached mtime. Differential streaming keeps SSH bytes low.
+3. Script aggregates per-host token totals (24h + all-time) by walking every
+   JSONL and summing `usage` blocks, deduped by `message.id` (matching what
+   `/usage` reports).
+4. Script also installs a one-shot pair of hooks on first run
    (`PermissionRequest`, `PreToolUse`, `PostToolUse`, `PermissionDenied`,
    `Stop`) that touch/remove marker files in `~/.claude/notch/`. The poller
    reads those markers to detect "Claude is currently blocked on a permission
    prompt" — there's no JSONL signal for that, so we use the hook system.
-4. Swift parses the new content and recomputes activity per session.
+5. Swift parses the new content and recomputes activity per session.
 
 SSH connections are kept warm with `ControlMaster=auto` + `ControlPersist=600`
 so successive polls reuse the open socket. Sockets are stored at
-`$TMPDIR/claude-notch-ssh/<hashed-alias>.sock` (filename is hashed so long
+`$TMPDIR/notch-monitor-ssh/<hashed-alias>.sock` (filename is hashed so long
 host FQDNs don't blow the AF_UNIX 104-byte path limit).
 
 ### Host detection
@@ -136,8 +194,9 @@ Hosts are auto-discovered by `HostDiscovery`:
    and `workspaceStorage/*/workspace.json` for `ssh-remote+<alias>` URIs.
 3. `~/.ssh/config`: any non-wildcard `Host` entries.
 
-Remote aliases are filtered to those starting with **`dev-dsk`**. To change
-the prefix, edit `allowedHostPrefix` in `Sources/ClaudeNotch/HostDiscovery.swift`.
+Remote SSH polling is **opt-in**: discovered aliases appear in the
+*Monitor SSH Connections* submenu with checkboxes. Only checked aliases get
+polled. State persists in `UserDefaults`.
 
 ### Requirements for remote hosts
 
@@ -153,21 +212,25 @@ existing hook configurations.
 
 | File | Purpose |
 |---|---|
-| `Sources/ClaudeNotch/AppDelegate.swift` | App entry, wires store → poller → notch window → menu bar. |
-| `Sources/ClaudeNotch/NotchWindow.swift` | Borderless `NSPanel` anchored to the menu-bar row. |
-| `Sources/ClaudeNotch/NotchRootView.swift` | SwiftUI views: collapsed pill, expanded panel, project cards. |
-| `Sources/ClaudeNotch/MenuBarController.swift` | `NSStatusItem` with version/Login/Quit menu. |
-| `Sources/ClaudeNotch/SessionStore.swift` | Observable state shared by UI and poller; pricing table. |
-| `Sources/ClaudeNotch/JSONLParser.swift` | Tail-of-JSONL → `SessionSnapshot` with cached activity inputs for time-decay. |
-| `Sources/ClaudeNotch/HostDiscovery.swift` | Local + VSCode Remote + `~/.ssh/config` host enumeration. |
-| `Sources/ClaudeNotch/SSHBridge.swift` | Subprocess runner with `ControlMaster` reuse. |
-| `Sources/ClaudeNotch/Poller.swift` | 1s timer, concurrent host fanout, differential streaming, hook install. |
+| `Sources/NotchMonitor/AppDelegate.swift` | App entry, wires store → poller → notch window → menu bar → updater. |
+| `Sources/NotchMonitor/NotchWindow.swift` | Borderless `NSPanel` per display, anchored to the menu-bar row. |
+| `Sources/NotchMonitor/NotchRootView.swift` | SwiftUI views: collapsed pill, expanded panel, project cards. |
+| `Sources/NotchMonitor/MenuBarController.swift` | `NSStatusItem` with version, update, placement, hosts, login, quit. |
+| `Sources/NotchMonitor/SessionStore.swift` | Observable state shared by UI and poller. |
+| `Sources/NotchMonitor/JSONLParser.swift` | JSONL → `SessionSnapshot` with cached activity inputs for time-decay. |
+| `Sources/NotchMonitor/HostDiscovery.swift` | Local + VSCode Remote + `~/.ssh/config` host enumeration. |
+| `Sources/NotchMonitor/SSHBridge.swift` | Subprocess runner with `ControlMaster` reuse. |
+| `Sources/NotchMonitor/Poller.swift` | 1s timer, concurrent host fanout, differential streaming, hook install. |
+| `Sources/NotchMonitor/Settings.swift` | `UserDefaults`-backed settings + change notifications. |
+| `Sources/NotchMonitor/UpdateChecker.swift` | Polls GitHub Releases for new versions. |
+| `Sources/NotchMonitor/Updater.swift` | Downloads, swaps bundle via trampoline script, relaunches. |
 | `scripts/build-app.sh` | One-shot build + bundle + sign + zip. |
+| `scripts/release.sh` | Tag + push + `gh release create` with the built zip. |
 | `scripts/make-icon.swift` | Programmatic icon generator (black squircle + pink dot). |
 
 ## Known limitations
 
-- Ad-hoc signed; not notarized. Recipients must right-click → Open the first
+- Ad-hoc signed; not notarized. Recipients must clear quarantine the first
   time. To notarize, you'd need an Apple Developer account ($99/yr).
 - "Start at Login" uses a LaunchAgent plist (works without signing) rather
   than `SMAppService.mainApp` (requires Developer ID *or* `/Applications`

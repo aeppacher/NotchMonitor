@@ -5,7 +5,7 @@ final class SSHBridge {
     private let controlDir: URL
 
     init() {
-        controlDir = FileManager.default.temporaryDirectory.appendingPathComponent("claude-notch-ssh", isDirectory: true)
+        controlDir = FileManager.default.temporaryDirectory.appendingPathComponent("notch-monitor-ssh", isDirectory: true)
         try? FileManager.default.createDirectory(at: controlDir, withIntermediateDirectories: true)
     }
 

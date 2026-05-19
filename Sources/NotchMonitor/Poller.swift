@@ -214,7 +214,7 @@ final class Poller {
     private let bridge: SSHBridge
     private let store: SessionStore
     private var timer: DispatchSourceTimer?
-    private let queue = DispatchQueue(label: "claude-notch.poller")
+    private let queue = DispatchQueue(label: "notch-monitor.poller")
 
     init(interval: TimeInterval, bridge: SSHBridge, store: SessionStore) {
         self.interval = interval
@@ -340,7 +340,7 @@ final class Poller {
                     perHostError[host.alias] = "\(host.alias): \(err)"
                     perHostState[host.alias] = .offline
                     resultsLock.unlock()
-                    NSLog("[claude-notch] %@ SSH failed: %@", host.alias, "\(err)")
+                    NSLog("[notch-monitor] %@ SSH failed: %@", host.alias, "\(err)")
                 }
             }
         }

@@ -47,9 +47,9 @@ git push origin "$TAG"
 
 echo "==> Creating GitHub release"
 gh release create "$TAG" \
-  --title "ClaudeNotch $TAG" \
+  --title "NotchMonitor $TAG" \
   --notes "$NOTES" \
-  dist/ClaudeNotch.zip
+  dist/NotchMonitor.zip
 
 echo
 echo "Released $TAG."

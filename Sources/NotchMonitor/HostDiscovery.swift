@@ -12,29 +12,41 @@ struct DetectedHost: Hashable {
 }
 
 enum HostDiscovery {
-    /// Only host aliases matching this prefix are considered for SSH polling.
-    /// Filters out unrelated `Host` entries from `~/.ssh/config` and stale
-    /// `ssh-remote+...` URIs from VSCode storage.
-    private static let allowedHostPrefix = "dev-dsk"
-
-    /// Returns local + any VSCode Remote SSH hosts seen recently. Falls back to
-    /// parsing ~/.ssh/config Host entries if VSCode storage is missing.
-    /// Remote aliases are filtered to those matching `allowedHostPrefix`.
+    /// Returns local plus any remote hosts the user has explicitly enabled
+    /// via Settings (`AppSettings.enabledRemoteHosts`). Defaults to local-only
+    /// — remote SSH polling is opt-in.
     static func discover() -> [DetectedHost] {
         var hosts: [DetectedHost] = [DetectedHost(alias: "local", isLocal: true)]
+        let enabled = AppSettings.shared.enabledRemoteHosts
+        let candidates = candidateAliases()
         var seen: Set<String> = ["local"]
-
-        for alias in vscodeRemoteHosts() where alias.hasPrefix(allowedHostPrefix) {
+        for alias in candidates where enabled.contains(alias) {
             if seen.insert(alias).inserted {
                 hosts.append(DetectedHost(alias: alias, isLocal: false))
             }
         }
-        for alias in sshConfigHosts() where alias.hasPrefix(allowedHostPrefix) {
-            if seen.insert(alias).inserted {
-                hosts.append(DetectedHost(alias: alias, isLocal: false))
-            }
+        // Also allow enabled hosts that aren't (yet) in our discovered list,
+        // so a user can pre-enable an alias before its `Host` entry shows up
+        // in ssh config. Won't affect anything unless the alias is real.
+        for alias in enabled where !seen.contains(alias) {
+            hosts.append(DetectedHost(alias: alias, isLocal: false))
+            seen.insert(alias)
         }
         return hosts
+    }
+
+    /// Every alias we can find from ssh-config + VSCode Remote storage.
+    /// De-duplicated, used to populate the "Monitor Hosts" menu.
+    static func candidateAliases() -> [String] {
+        var aliases: [String] = []
+        var seen = Set<String>()
+        for alias in sshConfigHosts() where seen.insert(alias).inserted {
+            aliases.append(alias)
+        }
+        for alias in vscodeRemoteHosts() where seen.insert(alias).inserted {
+            aliases.append(alias)
+        }
+        return aliases.sorted()
     }
 
     // MARK: - VSCode Remote

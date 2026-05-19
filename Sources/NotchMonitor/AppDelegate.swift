@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 @main
-struct ClaudeNotchApp {
+struct NotchMonitorApp {
     static func main() {
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)

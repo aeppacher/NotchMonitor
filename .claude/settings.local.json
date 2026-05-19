@@ -1,8 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(swift build *)",
-      "Bash(curl -s \"https://code.claude.com/docs/en/hooks.md\")"
-    ]
-  }
-}

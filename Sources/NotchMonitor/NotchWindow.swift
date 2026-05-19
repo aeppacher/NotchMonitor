@@ -50,11 +50,24 @@ final class NotchWindowController {
         ) { [weak self] _ in self?.rebuild() }
 
         // Collapse the panel whenever the user clicks anywhere outside our
-        // own windows or presses any key.
+        // own windows or presses any key. Global monitors fire for events
+        // delivered to other apps, so we filter mouse-downs by screen
+        // location to avoid collapsing on clicks inside our own panels —
+        // `.nonactivatingPanel` means the click never activates us, so
+        // without this filter the monitor treats every in-panel click as
+        // "external".
         outsideClickMonitor = NSEvent.addGlobalMonitorForEvents(
             matching: [.leftMouseDown, .rightMouseDown, .keyDown]
-        ) { [weak self] _ in
-            self?.collapseIfNeeded()
+        ) { [weak self] event in
+            guard let self = self else { return }
+            switch event.type {
+            case .leftMouseDown, .rightMouseDown:
+                let p = NSEvent.mouseLocation
+                let inside = self.panels.values.contains { $0.panel.frame.contains(p) }
+                if !inside { self.collapseIfNeeded() }
+            default:
+                self.collapseIfNeeded()
+            }
         }
     }
 
@@ -64,7 +77,6 @@ final class NotchWindowController {
             guard let self = self else { return }
             for (_, host) in self.panels where host.state.isExpanded {
                 host.state.isExpanded = false
-                host.state.source = .click
             }
         }
     }
@@ -189,14 +201,6 @@ final class NotchWindowController {
 }
 
 /// Shared expansion state so SwiftUI owns the animation entirely.
-enum ExpansionSource {
-    case click   // user clicked — sticky, ignore mouse-out
-    case hover   // user hovered — collapse on mouse-out
-}
-
 final class ExpandedState: ObservableObject {
     @Published var isExpanded: Bool = false
-    /// How the current expansion was triggered. Only meaningful while
-    /// `isExpanded` is true; reset to `.click` on collapse.
-    @Published var source: ExpansionSource = .click
 }

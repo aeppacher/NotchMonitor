@@ -181,42 +181,9 @@ struct NotchRootView: View {
                     )
                 )
                 .onHover { isInside in
-                    if isInside {
-                        guard !state.isExpanded else { return }
-                        let work = DispatchWorkItem {
-                            if !state.isExpanded {
-                                state.source = .hover
-                                state.isExpanded = true
-                            }
-                        }
-                        hoverExpandWorkItem?.cancel()
-                        hoverExpandWorkItem = work
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
-                    } else {
-                        hoverExpandWorkItem?.cancel()
-                        hoverExpandWorkItem = nil
-                        if state.isExpanded, state.source == .hover {
-                            state.isExpanded = false
-                        }
-                    }
+                    bodyHovered = isInside
+                    handleHoverChange()
                 }
-                .gesture(
-                    DragGesture(minimumDistance: 0)
-                        .onChanged { _ in
-                            if !pressed {
-                                pressed = true
-                                if state.isExpanded {
-                                    state.isExpanded = false
-                                } else {
-                                    state.source = .click
-                                    state.isExpanded = true
-                                }
-                                hoverExpandWorkItem?.cancel()
-                                hoverExpandWorkItem = nil
-                            }
-                        }
-                        .onEnded { _ in pressed = false }
-                )
                 // Shadow only when expanded — when collapsed, the soft blur
                 // around the body's left edge would leak past the notch's
                 // rounded curve into the menu bar area below the bridge.
@@ -245,6 +212,10 @@ struct NotchRootView: View {
                 ExpandedHeader(store: store)
                     .padding(.horizontal, 14)
                     .frame(width: resolvedW, height: metrics.notchHeight)
+                    .onHover { isInside in
+                        headerHovered = isInside
+                        handleHoverChange()
+                    }
                     .transition(.asymmetric(
                         insertion: .opacity.animation(.easeInOut(duration: 0.18).delay(0.12)),
                         removal: .opacity.animation(.easeInOut(duration: 0.08))
@@ -260,8 +231,44 @@ struct NotchRootView: View {
         .animation(.easeOut(duration: 0.22), value: resolvedH)
     }
 
-    @State private var pressed: Bool = false
     @State private var hoverExpandWorkItem: DispatchWorkItem?
+    @State private var hoverCollapseWorkItem: DispatchWorkItem?
+    /// Hover state is split across the body shape and the header overlay
+    /// (a sibling in the ZStack). When the cursor moves between them,
+    /// the leaving region fires `false` *before* the entering one fires
+    /// `true`, so we debounce collapse and require both to be out.
+    @State private var bodyHovered: Bool = false
+    @State private var headerHovered: Bool = false
+
+    private func handleHoverChange() {
+        let anyHovered = bodyHovered || headerHovered
+        if anyHovered {
+            hoverCollapseWorkItem?.cancel()
+            hoverCollapseWorkItem = nil
+            guard !state.isExpanded else { return }
+            let work = DispatchWorkItem {
+                if !state.isExpanded {
+                    state.isExpanded = true
+                }
+            }
+            hoverExpandWorkItem?.cancel()
+            hoverExpandWorkItem = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
+        } else {
+            hoverExpandWorkItem?.cancel()
+            hoverExpandWorkItem = nil
+            guard state.isExpanded else { return }
+            let work = DispatchWorkItem {
+                if bodyHovered || headerHovered { return }
+                if state.isExpanded {
+                    state.isExpanded = false
+                }
+            }
+            hoverCollapseWorkItem?.cancel()
+            hoverCollapseWorkItem = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08, execute: work)
+        }
+    }
 
     @ViewBuilder
     private var content: some View {
@@ -436,8 +443,8 @@ private struct HostStatusFooter: View {
                 .font(.system(size: 10, weight: .medium, design: .rounded))
                 .foregroundStyle(.white.opacity(0.55))
             }
-            Spacer(minLength: 0)
         }
+        .frame(maxWidth: .infinity, alignment: .center)
         .padding(.top, 4)
     }
 

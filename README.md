@@ -17,7 +17,7 @@ locally and on remote machines you SSH into.
    Without the `xattr` step, Gatekeeper refuses to launch the unsigned bundle
    and shows *"NotchMonitor can't be opened because it can't be verified."*
    (This is a one-time gate — the in-app auto-updater handles quarantine on
-   future updates.)
+   future updates.) I am not paying Apple $99/yr to sign this.
 
 After first launch, look for a small dashed-rectangle icon in your menu bar.
 Click it for the menu:

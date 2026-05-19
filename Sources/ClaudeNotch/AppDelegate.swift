@@ -1,0 +1,34 @@
+import AppKit
+import SwiftUI
+
+@main
+struct ClaudeNotchApp {
+    static func main() {
+        let app = NSApplication.shared
+        app.setActivationPolicy(.accessory)
+        let delegate = AppDelegate()
+        app.delegate = delegate
+        app.run()
+    }
+}
+
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    private var notchController: NotchWindowController?
+    private var menuBar: MenuBarController?
+    private let store = SessionStore()
+    private var poller: Poller?
+    private let updateChecker = UpdateChecker()
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        notchController = NotchWindowController(store: store)
+        notchController?.show()
+
+        menuBar = MenuBarController(updateChecker: updateChecker)
+
+        let bridge = SSHBridge()
+        poller = Poller(interval: 1.0, bridge: bridge, store: store)
+        poller?.start()
+
+        updateChecker.start()
+    }
+}

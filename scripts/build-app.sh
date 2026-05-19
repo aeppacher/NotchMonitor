@@ -71,6 +71,12 @@ echo "==> Ad-hoc codesign (so Gatekeeper doesn't flag the binary as damaged)"
 # developer" warning on first launch (right-click → Open).
 codesign --force --deep --sign - "$APP"
 
+echo "==> Stripping quarantine attributes"
+# Clear any com.apple.quarantine attributes on the bundle before zipping.
+# (Browsers re-apply this on download regardless, so this mostly cleans up
+# attributes that may have been inherited from previous builds.)
+xattr -dr com.apple.quarantine "$APP" 2>/dev/null || true
+
 echo "==> Verifying"
 codesign --verify --deep --strict --verbose=2 "$APP" 2>&1 | sed 's/^/    /'
 
@@ -86,6 +92,8 @@ echo "Done."
 echo "  App:  $APP"
 echo "  Zip:  $ZIP  ($SIZE)"
 echo
-echo "To share: send the zip. First-time recipients should right-click the"
-echo "extracted .app and choose Open (Gatekeeper requires this once for"
-echo "non-notarized apps)."
+echo "To share: send the zip. After download, recipients should run:"
+echo "    xattr -dr com.apple.quarantine /Applications/ClaudeNotch.app"
+echo "    open /Applications/ClaudeNotch.app"
+echo "(One-time setup — clears the browser-added quarantine flag so macOS"
+echo "doesn't refuse to launch the unsigned bundle.)"

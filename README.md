@@ -58,9 +58,19 @@ Send `dist/ClaudeNotch.zip`. Recipients:
 1. Unzip it.
 2. Drag `ClaudeNotch.app` to `/Applications` (recommended — cleaner login-item
    path, fewer Gatekeeper friction points).
-3. **First launch only:** right-click the app → **Open** → confirm.
-   (Gatekeeper requires this gesture for ad-hoc-signed apps.)
+3. **First launch only:** clear the quarantine flag the browser added on
+   download, then open:
+   ```sh
+   xattr -dr com.apple.quarantine /Applications/ClaudeNotch.app
+   open /Applications/ClaudeNotch.app
+   ```
+   Without this, Gatekeeper refuses to launch the unsigned bundle and shows
+   "ClaudeNotch can't be opened because it can't be verified."
 4. Subsequent launches: double-click normally.
+
+The auto-updater handles the quarantine flag on its own — every in-app update
+runs `xattr -dr com.apple.quarantine` on the swapped bundle, so users only do
+the manual step once at install.
 
 ### Make/regenerate the icon
 

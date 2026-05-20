@@ -92,3 +92,30 @@ final class AppSettings {
         enabledRemoteHosts = current
     }
 }
+
+/// User-defined display names for project groups. Keyed by group key
+/// (`"<host>::<project>"`), persisted via UserDefaults.
+final class ProjectNameStore: ObservableObject {
+    static let shared = ProjectNameStore()
+
+    private let key = "projectCustomNames"
+
+    @Published private(set) var names: [String: String] = [:]
+
+    private init() {
+        names = (UserDefaults.standard.dictionary(forKey: key) as? [String: String]) ?? [:]
+    }
+
+    func displayName(for groupKey: String, default fallback: String) -> String {
+        names[groupKey] ?? fallback
+    }
+
+    func setName(_ name: String?, for groupKey: String) {
+        if let n = name, !n.isEmpty {
+            names[groupKey] = n
+        } else {
+            names.removeValue(forKey: groupKey)
+        }
+        UserDefaults.standard.set(names, forKey: key)
+    }
+}

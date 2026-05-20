@@ -504,10 +504,17 @@ func groupedSessions(_ sessions: [SessionSnapshot]) -> [SessionGroup] {
 private struct ProjectCard: View {
     let group: SessionGroup
     let onDismiss: (_ sessionId: String) -> Void
+    @ObservedObject private var nameStore = ProjectNameStore.shared
+    @State private var isEditing = false
+    @State private var editText = ""
+
+    private var displayName: String {
+        nameStore.displayName(for: group.key, default: group.project)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            // Header: host icon · project · branch · session count badge
+            // Header: host icon · project · edit · session count badge
             HStack(spacing: 8) {
                 ActivityDot(activity: group.aggregateActivity)
 
@@ -516,10 +523,36 @@ private struct ProjectCard: View {
                     .foregroundStyle(.white.opacity(0.65))
                     .help(group.isLocal ? "Local" : group.host)
 
-                Text(group.project)
+                if isEditing {
+                    TextField("Project name", text: $editText, onCommit: {
+                        commitRename()
+                    })
+                    .textFieldStyle(.plain)
                     .font(.system(size: 14, weight: .semibold, design: .rounded))
                     .foregroundStyle(.white)
-                    .lineLimit(1)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(RoundedRectangle(cornerRadius: 4).fill(Color.white.opacity(0.1)))
+                    .onExitCommand { cancelRename() }
+                } else {
+                    Text(displayName)
+                        .font(.system(size: 14, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+
+                    Button {
+                        editText = displayName
+                        isEditing = true
+                    } label: {
+                        Image(systemName: "square.and.pencil")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.5))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Rename this project")
+                }
+
+                Spacer(minLength: 4)
 
                 if let branch = group.gitBranch {
                     Label {
@@ -531,8 +564,6 @@ private struct ProjectCard: View {
                     .foregroundStyle(.white.opacity(0.65))
                     .labelStyle(.titleAndIcon)
                 }
-
-                Spacer(minLength: 4)
 
                 if group.sessions.count > 1 {
                     Text("\(group.sessions.count)")
@@ -557,6 +588,20 @@ private struct ProjectCard: View {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .fill(Color.white.opacity(0.06))
         )
+    }
+
+    private func commitRename() {
+        let trimmed = editText.trimmingCharacters(in: .whitespaces)
+        if trimmed.isEmpty || trimmed == group.project {
+            nameStore.setName(nil, for: group.key)
+        } else {
+            nameStore.setName(trimmed, for: group.key)
+        }
+        isEditing = false
+    }
+
+    private func cancelRename() {
+        isEditing = false
     }
 }
 

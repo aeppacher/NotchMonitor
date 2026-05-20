@@ -284,11 +284,11 @@ enum JSONLParser {
 
         case .assistantThinking(let stop):
             if stop == "end_turn" { return .idle }
-            return age > 90 ? .idle : .thinking
+            return age > 30 ? .idle : .thinking
 
         case .assistantText(let stop):
             if stop == "end_turn" { return .idle }
-            return age > 90 ? .idle : .thinking
+            return age > 30 ? .idle : .thinking
 
         case .assistantToolUse(let name, _):
             if blockingUserTools.contains(name) {

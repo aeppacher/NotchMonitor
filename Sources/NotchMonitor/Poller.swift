@@ -37,6 +37,11 @@ HOOK_DIR="$NOTCH_DIR/hooks"
 # version suffix to force a re-run after script changes.
 INSTALL_SENTINEL="$NOTCH_DIR/.installed.v3"
 mkdir -p "$NOTCH_DIR"
+# On force-refresh, purge all awaiting markers so stale permission state
+# (e.g. from an Esc interrupt that didn't fire the clear hook) is wiped.
+if [ "${CLEAR_MARKERS:-}" = "1" ]; then
+  find "$NOTCH_DIR" -maxdepth 1 -type f -name '*.awaiting' -delete 2>/dev/null
+fi
 # Clean up older sentinels so their presence doesn't keep us from re-running
 # the install when the script has changed.
 rm -f "$NOTCH_DIR/.installed.v1" "$NOTCH_DIR/.installed.v2" 2>/dev/null
@@ -125,7 +130,8 @@ fi
 # nullglob/nomatch differences between bash and zsh on the remote.
 find "$NOTCH_DIR" -maxdepth 1 -type f -name '*.awaiting' 2>/dev/null | while read -r marker; do
   bn=$(basename "$marker" .awaiting)
-  printf '===AWAITING=== %s\n' "$bn"
+  mmt=$(stat -c %Y "$marker" 2>/dev/null || stat -f %m "$marker" 2>/dev/null)
+  printf '===AWAITING=== %s %s\n' "$bn" "$mmt"
 done
 
 # --- Live token totals (24h + all-time) --------------------------------
@@ -231,8 +237,10 @@ final class Poller {
 
     /// Force an immediate poll. Cheap because per-host re-entrancy guards
     /// will skip hosts that already have a tick in flight.
-    func reloadNow() {
-        queue.async { [weak self] in self?.tick() }
+    /// When `clearMarkers` is true, all `.awaiting` marker files are removed
+    /// on each host before scanning — a hard reset for stale permission state.
+    func reloadNow(clearMarkers: Bool = true) {
+        queue.async { [weak self] in self?.tick(clearMarkers: clearMarkers) }
     }
 
     /// Per-host last-known snapshots. We keep these around so a single failed
@@ -264,7 +272,7 @@ final class Poller {
     /// Per-host lifecycle state for the footer in the UI.
     private var hostStateByAlias: [String: HostState] = [:]
 
-    private func tick() {
+    private func tick(clearMarkers: Bool = false) {
         let hosts = HostDiscovery.discover()
         let group = DispatchGroup()
         let resultsLock = NSLock()
@@ -329,7 +337,8 @@ final class Poller {
                     .joined(separator: ":")
                 // Quote because rels contain `-` and other shell-safe chars
                 // but never `'` (they're filesystem paths Claude Code wrote).
-                let cmd = "KNOWN_MTIMES='\(known)' WINDOW_MIN=\(windowMinutes) " + remoteScript
+                let clearEnv = clearMarkers ? "CLEAR_MARKERS=1 " : ""
+                let cmd = "\(clearEnv)KNOWN_MTIMES='\(known)' WINDOW_MIN=\(windowMinutes) " + remoteScript
                 // Generous: cold SSH connect to corp dev hosts can take 3-4s
                 // and the script does install + tail work on first run.
                 switch self.bridge.run(host: host, command: cmd, timeout: 25) {
@@ -447,7 +456,7 @@ final class Poller {
         var inSettings = false
         var settingsBuffer = ""
         var defaultModelHint: String?
-        var awaitingSessionIds: Set<String> = []
+        var awaitingSessionMarkers: [String: Date] = [:]  // session_id -> marker mtime
         var remoteState: HostState?
 
 
@@ -457,7 +466,13 @@ final class Poller {
         // that have aged out of the 60-min window on the remote.
         var seenKeys: Set<String> = []
 
-        func awaiting(for sid: String) -> Bool { awaitingSessionIds.contains(sid) }
+        func awaiting(for sid: String, fileMTime: Date) -> Bool {
+            guard let markerTime = awaitingSessionMarkers[sid] else { return false }
+            // If the JSONL was written after the marker, the session has
+            // progressed past the permission request — the marker is stale
+            // (e.g. user hit Esc which doesn't fire the clear hook).
+            return fileMTime <= markerTime
+        }
 
         func parseAndAppend(rel: String, mtime: Date, lines: [String]) {
             let parts = rel.split(separator: "/", maxSplits: 1).map(String.init)
@@ -469,7 +484,7 @@ final class Poller {
                 projectDir: projectDir,
                 host: host,
                 defaultModelHint: defaultModelHint,
-                awaitingPermission: awaiting(for: sessionId),
+                awaitingPermission: awaiting(for: sessionId, fileMTime: mtime),
                 lines: lines,
                 fileMTime: mtime
             ) else { return }
@@ -495,7 +510,7 @@ final class Poller {
             //      need the current `Date()` to evaluate.
             let recomputed = JSONLParser.recomputeActivity(
                 inputs: cached.inputs,
-                awaitingPermission: awaiting(for: sessionId)
+                awaitingPermission: awaiting(for: sessionId, fileMTime: mtime)
             )
             let cachedSnap = cached.snapshot
             let snap: SessionSnapshot = (recomputed == cachedSnap.activity) ? cachedSnap :
@@ -555,9 +570,15 @@ final class Poller {
                 continue
             }
             if line.hasPrefix("===AWAITING=== ") {
-                let sid = String(line.dropFirst("===AWAITING=== ".count))
-                    .trimmingCharacters(in: .whitespaces)
-                if !sid.isEmpty { awaitingSessionIds.insert(sid) }
+                let parts = line.dropFirst("===AWAITING=== ".count)
+                    .split(separator: " ", maxSplits: 1)
+                let sid = parts.first.map { String($0).trimmingCharacters(in: .whitespaces) } ?? ""
+                let markerMTime: Date? = parts.count > 1
+                    ? TimeInterval(parts[1].trimmingCharacters(in: .whitespaces)).map { Date(timeIntervalSince1970: $0) }
+                    : nil
+                if !sid.isEmpty {
+                    awaitingSessionMarkers[sid] = markerMTime ?? Date.distantPast
+                }
                 continue
             }
             if line == "===SETTINGS===" {

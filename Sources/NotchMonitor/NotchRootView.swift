@@ -375,6 +375,7 @@ struct ExpandedHeader: View {
             .font(.system(size: 11, weight: .medium, design: .rounded))
             .foregroundStyle(.white.opacity(0.7))
             Button {
+                store.reset()
                 store.onReloadAll?()
             } label: {
                 Image(systemName: "arrow.clockwise")
@@ -384,7 +385,7 @@ struct ExpandedHeader: View {
                     .background(Circle().fill(Color.white.opacity(0.08)))
             }
             .buttonStyle(.plain)
-            .help("Force a refresh across every host")
+            .help("Reset all sessions to idle and clear stale state")
         }
     }
 }
@@ -517,6 +518,40 @@ private struct GitStatusBadge: View {
     }
 }
 
+private struct PermissionRequestView: View {
+    let request: PermissionRequest
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "exclamationmark.shield")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.pink)
+            Text(request.toolName)
+                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                .foregroundStyle(.pink)
+            if !request.inputPreview.isEmpty {
+                Text(request.inputPreview)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.8))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(Color.pink.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .strokeBorder(Color.pink.opacity(0.2), lineWidth: 0.5)
+                )
+        )
+    }
+}
+
 private struct ProjectCard: View {
     let group: SessionGroup
     let onDismiss: (_ sessionId: String) -> Void
@@ -599,7 +634,7 @@ private struct ProjectCard: View {
             // Per-session sub-rows.
             VStack(spacing: 6) {
                 ForEach(group.sessions) { s in
-                    SessionStatRow(session: s, onDismiss: onDismiss)
+                    SessionStatRow(session: s, onDismiss: onDismiss, store: store)
                 }
             }
         }
@@ -629,6 +664,7 @@ private struct ProjectCard: View {
 private struct SessionStatRow: View {
     let session: SessionSnapshot
     let onDismiss: (_ sessionId: String) -> Void
+    @ObservedObject var store: SessionStore
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
@@ -705,6 +741,11 @@ private struct SessionStatRow: View {
             }
             .font(.system(size: 11, weight: .medium, design: .monospaced))
             .foregroundStyle(.white.opacity(0.65))
+
+            // Permission request panel
+            if let req = permissionRequest {
+                PermissionRequestView(request: req)
+            }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
@@ -712,6 +753,11 @@ private struct SessionStatRow: View {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(Color.white.opacity(0.04))
         )
+    }
+
+    private var permissionRequest: PermissionRequest? {
+        let rawId = session.id.split(separator: "/", maxSplits: 1).last.map(String.init) ?? session.id
+        return store.permissionRequests[rawId]
     }
 
     private var contextLabel: String {

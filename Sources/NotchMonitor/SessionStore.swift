@@ -125,6 +125,29 @@ struct GitStatus: Equatable {
     var isEmpty: Bool { additions == 0 && deletions == 0 }
 }
 
+struct PermissionRequest: Equatable {
+    let sessionId: String
+    let toolName: String
+    let toolInput: [String: Any]
+
+    var inputPreview: String {
+        if let cmd = toolInput["command"] as? String {
+            return String(cmd.prefix(120))
+        }
+        if let path = toolInput["file_path"] as? String {
+            return path
+        }
+        if let query = toolInput["query"] as? String {
+            return String(query.prefix(120))
+        }
+        return ""
+    }
+
+    static func == (lhs: PermissionRequest, rhs: PermissionRequest) -> Bool {
+        lhs.sessionId == rhs.sessionId && lhs.toolName == rhs.toolName && lhs.inputPreview == rhs.inputPreview
+    }
+}
+
 final class SessionStore: ObservableObject {
     @Published var sessions: [SessionSnapshot] = []
     @Published var lastError: String?
@@ -133,10 +156,34 @@ final class SessionStore: ObservableObject {
     @Published var hosts: [HostStatus] = []
     @Published var todayTotals: DailyTotals = DailyTotals(tokensAllTime: 0, tokensLast24h: 0)
     @Published var gitStatusByPath: [String: GitStatus] = [:]
+    @Published var permissionRequests: [String: PermissionRequest] = [:]
 
     /// Force an immediate poll across every host. Wired to the Poller in
     /// AppDelegate so the UI doesn't need to know about it directly.
     var onReloadAll: (() -> Void)?
+
+    /// Reset all sessions to idle and clear pending permission requests.
+    func reset() {
+        permissionRequests.removeAll()
+        sessions = sessions.map { s in
+            SessionSnapshot(
+                id: s.id, host: s.host, isLocal: s.isLocal,
+                project: s.project,
+                activity: .idle,
+                lastMessageAt: Date(),
+                inputTokens: s.inputTokens,
+                outputTokens: s.outputTokens,
+                cacheReadTokens: s.cacheReadTokens,
+                cacheCreationTokens: s.cacheCreationTokens,
+                lastAssistantPreview: s.lastAssistantPreview,
+                model: s.model, gitBranch: s.gitBranch,
+                cwd: s.cwd,
+                contextTokens: s.contextTokens,
+                modelContextLimit: s.modelContextLimit
+            )
+        }
+    }
+
     /// Sessions the user has explicitly dismissed, mapped to the
     /// `lastMessageAt` value at the time of dismissal. The session stays
     /// hidden until a poll observes a strictly newer `lastMessageAt`, at
@@ -164,7 +211,7 @@ final class SessionStore: ObservableObject {
         return sessions.filter { $0.activity.category == target }.count
     }
 
-    func update(_ snapshots: [SessionSnapshot], connected: Bool, error: String?, hosts: [HostStatus], todayTotals: DailyTotals, gitStatus: [String: GitStatus] = [:]) {
+    func update(_ snapshots: [SessionSnapshot], connected: Bool, error: String?, hosts: [HostStatus], todayTotals: DailyTotals, gitStatus: [String: GitStatus] = [:], permissionRequests: [String: PermissionRequest] = [:]) {
         self.todayTotals = todayTotals
         // Filter out dismissed sessions whose lastMessageAt hasn't advanced
         // past the moment the user dismissed them. Once an update arrives,
@@ -188,6 +235,7 @@ final class SessionStore: ObservableObject {
         self.hasPolled = true
         self.hosts = hosts
         self.gitStatusByPath = gitStatus
+        self.permissionRequests = permissionRequests
     }
 }
 

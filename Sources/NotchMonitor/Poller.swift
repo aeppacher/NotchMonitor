@@ -35,7 +35,7 @@ HOOK_DIR="$NOTCH_DIR/hooks"
 # --- One-time hook installation -----------------------------------------
 # Gated by a sentinel so we don't redo this work on every poll. Bump the
 # version suffix to force a re-run after script changes.
-INSTALL_SENTINEL="$NOTCH_DIR/.installed.v3"
+INSTALL_SENTINEL="$NOTCH_DIR/.installed.v6"
 mkdir -p "$NOTCH_DIR"
 # On force-refresh, purge all awaiting markers so stale permission state
 # (e.g. from an Esc interrupt that didn't fire the clear hook) is wiped.
@@ -44,7 +44,7 @@ if [ "${CLEAR_MARKERS:-}" = "1" ]; then
 fi
 # Clean up older sentinels so their presence doesn't keep us from re-running
 # the install when the script has changed.
-rm -f "$NOTCH_DIR/.installed.v1" "$NOTCH_DIR/.installed.v2" 2>/dev/null
+rm -f "$NOTCH_DIR/.installed.v1" "$NOTCH_DIR/.installed.v2" "$NOTCH_DIR/.installed.v3" "$NOTCH_DIR/.installed.v4" "$NOTCH_DIR/.installed.v5" 2>/dev/null
 if [ -f "$INSTALL_SENTINEL" ]; then
   printf '===STATE=== active\n'
 else
@@ -53,14 +53,13 @@ fi
 if [ ! -f "$INSTALL_SENTINEL" ]; then
 mkdir -p "$HOOK_DIR"
 
-# Marker writer: extracts session_id from JSON on stdin, touches a marker.
-# Read ALL of stdin (not just the first line) — Claude Code can send pretty-
-# printed multi-line JSON, in which case `session_id` may not be on line 1.
-cat > "$HOOK_DIR/mark-awaiting.sh" <<'EOF'
+# PermissionRequest hook: writes request JSON to marker so the notch app
+# can display what's being requested. Non-blocking — display only.
+cat > "$HOOK_DIR/permission-request.sh" <<'EOF'
 #!/bin/sh
 INPUT=$(cat)
 SID=$(printf '%s' "$INPUT" | tr -d '\n' | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
-[ -n "$SID" ] && touch "$HOME/.claude/notch/$SID.awaiting" 2>/dev/null
+[ -n "$SID" ] && printf '%s' "$INPUT" | tr -d '\n' > "$HOME/.claude/notch/$SID.awaiting" 2>/dev/null
 exit 0
 EOF
 cat > "$HOOK_DIR/clear-awaiting.sh" <<'EOF'
@@ -70,7 +69,7 @@ SID=$(printf '%s' "$INPUT" | tr -d '\n' | sed -n 's/.*"session_id"[[:space:]]*:[
 [ -n "$SID" ] && rm -f "$HOME/.claude/notch/$SID.awaiting" 2>/dev/null
 exit 0
 EOF
-chmod +x "$HOOK_DIR/mark-awaiting.sh" "$HOOK_DIR/clear-awaiting.sh"
+chmod +x "$HOOK_DIR/permission-request.sh" "$HOOK_DIR/clear-awaiting.sh"
 
 # Patch settings.json's hooks field. Always strip our previous entries first
 # (matching by command path) and re-add — that way upgrades to this script
@@ -84,9 +83,11 @@ try:
 except Exception:
     sys.exit(0)
 hooks = cfg.setdefault("hooks", {})
-mark = f"{hook_dir}/mark-awaiting.sh"
+perm_req = f"{hook_dir}/permission-request.sh"
 clear = f"{hook_dir}/clear-awaiting.sh"
-ours = {mark, clear}
+# Also remove legacy entries from earlier versions.
+legacy = {f"{hook_dir}/mark-awaiting.sh", f"{hook_dir}/pre-tool.sh"}
+ours = {perm_req, clear} | legacy
 
 # Remove any existing entries that point at our scripts so we can re-add.
 for event, arr in list(hooks.items()):
@@ -106,16 +107,9 @@ for event, arr in list(hooks.items()):
 def add(event, cmd):
     arr = hooks.setdefault(event, [])
     arr.append({"matcher": "", "hooks": [{"type": "command", "command": cmd}]})
-add("PermissionRequest", mark)
-# PreToolUse fires after the user has resolved the permission prompt and
-# Claude is about to execute the (now-approved) tool. Using it as a clear
-# signal means the badge stops showing "Awaiting input" the moment you
-# click Allow, instead of waiting for the tool to complete (which can be
-# tens of seconds for a long Bash). Safe for tools that didn't need a
-# prompt: `rm -f` on a nonexistent marker is a no-op.
+add("PermissionRequest", perm_req)
 add("PreToolUse", clear)
 add("PostToolUse", clear)
-add("PermissionDenied", clear)
 add("Stop", clear)
 tmp = path + ".notch.tmp"
 with open(tmp, "w") as f: json.dump(cfg, f, indent=2)
@@ -131,7 +125,12 @@ fi
 find "$NOTCH_DIR" -maxdepth 1 -type f -name '*.awaiting' 2>/dev/null | while read -r marker; do
   bn=$(basename "$marker" .awaiting)
   mmt=$(stat -c %Y "$marker" 2>/dev/null || stat -f %m "$marker" 2>/dev/null)
-  printf '===AWAITING=== %s %s\n' "$bn" "$mmt"
+  content=$(cat "$marker" 2>/dev/null)
+  if [ -n "$content" ]; then
+    printf '===AWAITING=== %s %s %s\n' "$bn" "$mmt" "$content"
+  else
+    printf '===AWAITING=== %s %s\n' "$bn" "$mmt"
+  fi
 done
 
 # --- Live token totals (24h + all-time) --------------------------------
@@ -308,6 +307,7 @@ final class Poller {
         var perHostState: [String: HostState] = [:]
         var perHostTotals: [String: DailyTotals] = [:]
         var perHostGitStatus: [String: [String: GitStatus]] = [:]
+        var perHostPermRequests: [String: [String: PermissionRequest]] = [:]
 
         // Snapshot once per tick so all hosts use a consistent window even if
         // the user flips the setting mid-tick.
@@ -372,11 +372,12 @@ final class Poller {
                 // and the script does install + tail work on first run.
                 switch self.bridge.run(host: host, command: cmd, timeout: 25) {
                 case .success(let out):
-                    let (snaps, remoteState, totals, gitStatuses) = self.parse(output: out, host: host, stalenessWindow: windowSeconds)
+                    let (snaps, remoteState, totals, gitStatuses, permReqs) = self.parse(output: out, host: host, stalenessWindow: windowSeconds)
                     resultsLock.lock()
                     perHostSnapshots[host.alias] = snaps
                     perHostTotals[host.alias] = totals
                     perHostGitStatus[host.alias] = gitStatuses
+                    perHostPermRequests[host.alias] = permReqs
                     if host.isLocal {
                         perHostState[host.alias] = .localOk
                     } else if let rs = remoteState {
@@ -470,10 +471,19 @@ final class Poller {
             }
         }
 
+        // Merge permission requests from all hosts.
+        var mergedPermRequests: [String: PermissionRequest] = [:]
+        for (_, reqs) in perHostPermRequests {
+            for (sid, req) in reqs {
+                mergedPermRequests[sid] = req
+            }
+        }
+
         let snapshots = allSnapshots
         let connected = anyConnected
         let err = lastErr
         let gitStatus = mergedGitStatus
+        let permReqs = mergedPermRequests
         DispatchQueue.main.async { [store] in
             store.update(
                 snapshots,
@@ -481,17 +491,19 @@ final class Poller {
                 error: err,
                 hosts: hostStatuses,
                 todayTotals: aggTotals,
-                gitStatus: gitStatus
+                gitStatus: gitStatus,
+                permissionRequests: permReqs
             )
         }
     }
 
-    private func parse(output: String, host: DetectedHost, stalenessWindow: TimeInterval) -> ([SessionSnapshot], HostState?, DailyTotals, [String: GitStatus]) {
+    private func parse(output: String, host: DetectedHost, stalenessWindow: TimeInterval) -> ([SessionSnapshot], HostState?, DailyTotals, [String: GitStatus], [String: PermissionRequest]) {
         var snapshots: [SessionSnapshot] = []
         var currentRel: String?
         var currentMTime: Date = Date()
         var buffer: [String] = []
         var gitStatuses: [String: GitStatus] = [:]
+        var permRequests: [String: PermissionRequest] = [:]
 
         // Phases: AWAITING markers, then settings, then file blocks.
         var inSettings = false
@@ -508,11 +520,7 @@ final class Poller {
         var seenKeys: Set<String> = []
 
         func awaiting(for sid: String, fileMTime: Date) -> Bool {
-            guard let markerTime = awaitingSessionMarkers[sid] else { return false }
-            // If the JSONL was written after the marker, the session has
-            // progressed past the permission request — the marker is stale
-            // (e.g. user hit Esc which doesn't fire the clear hook).
-            return fileMTime <= markerTime
+            return awaitingSessionMarkers[sid] != nil
         }
 
         func parseAndAppend(rel: String, mtime: Date, lines: [String]) {
@@ -623,14 +631,25 @@ final class Poller {
                 continue
             }
             if line.hasPrefix("===AWAITING=== ") {
-                let parts = line.dropFirst("===AWAITING=== ".count)
-                    .split(separator: " ", maxSplits: 1)
+                let rest = line.dropFirst("===AWAITING=== ".count)
+                let parts = rest.split(separator: " ", maxSplits: 2)
                 let sid = parts.first.map { String($0).trimmingCharacters(in: .whitespaces) } ?? ""
                 let markerMTime: Date? = parts.count > 1
                     ? TimeInterval(parts[1].trimmingCharacters(in: .whitespaces)).map { Date(timeIntervalSince1970: $0) }
                     : nil
                 if !sid.isEmpty {
                     awaitingSessionMarkers[sid] = markerMTime ?? Date.distantPast
+                    if parts.count > 2,
+                       let jsonData = String(parts[2]).data(using: .utf8),
+                       let obj = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+                       let toolName = obj["tool_name"] as? String {
+                        let toolInput = (obj["tool_input"] as? [String: Any]) ?? [:]
+                        permRequests[sid] = PermissionRequest(
+                            sessionId: sid,
+                            toolName: toolName,
+                            toolInput: toolInput
+                        )
+                    }
                 }
                 continue
             }
@@ -692,7 +711,7 @@ final class Poller {
         inFlightLock.unlock()
 
         let hostTotals = DailyTotals(tokensAllTime: dailyAll, tokensLast24h: daily24)
-        return (snapshots, remoteState, hostTotals, gitStatuses)
+        return (snapshots, remoteState, hostTotals, gitStatuses, permRequests)
     }
 
     /// Pulls the top-level "model" field out of settings.json. Settings can be

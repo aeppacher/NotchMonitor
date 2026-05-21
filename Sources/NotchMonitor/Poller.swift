@@ -44,7 +44,7 @@ if [ "${CLEAR_MARKERS:-}" = "1" ]; then
 fi
 # Clean up older sentinels so their presence doesn't keep us from re-running
 # the install when the script has changed.
-rm -f "$NOTCH_DIR/.installed.v1" "$NOTCH_DIR/.installed.v2" "$NOTCH_DIR/.installed.v3" "$NOTCH_DIR/.installed.v4" "$NOTCH_DIR/.installed.v5" 2>/dev/null
+find "$NOTCH_DIR" -maxdepth 1 -name '.installed.v*' ! -name '.installed.v6' -delete 2>/dev/null
 if [ -f "$INSTALL_SENTINEL" ]; then
   printf '===STATE=== active\n'
 else
@@ -52,6 +52,8 @@ else
 fi
 if [ ! -f "$INSTALL_SENTINEL" ]; then
 mkdir -p "$HOOK_DIR"
+# Remove legacy hook scripts from earlier versions.
+rm -f "$HOOK_DIR/mark-awaiting.sh" "$HOOK_DIR/pre-tool.sh" 2>/dev/null
 
 # PermissionRequest hook: writes request JSON to marker so the notch app
 # can display what's being requested. Non-blocking — display only.

@@ -48,6 +48,7 @@ final class AppSettings {
     private let displayKey = "displayPlacement"
     private let hostsKey = "enabledRemoteHosts"
     private let activityWindowKey = "activityWindowHours"
+    private let gitTrackingKey = "gitTrackingEnabled"
 
     var activityWindow: ActivityWindow {
         get {
@@ -82,6 +83,17 @@ final class AppSettings {
         }
         set {
             UserDefaults.standard.set(Array(newValue).sorted(), forKey: hostsKey)
+            NotificationCenter.default.post(name: Self.didChangeNotification, object: nil)
+        }
+    }
+
+    var gitTrackingEnabled: Bool {
+        get {
+            if UserDefaults.standard.object(forKey: gitTrackingKey) == nil { return true }
+            return UserDefaults.standard.bool(forKey: gitTrackingKey)
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: gitTrackingKey)
             NotificationCenter.default.post(name: Self.didChangeNotification, object: nil)
         }
     }

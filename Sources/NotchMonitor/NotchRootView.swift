@@ -405,7 +405,7 @@ private struct ExpandedView: View {
                     ForEach(groupedSessions(store.sessions), id: \.key) { group in
                         ProjectCard(group: group, onDismiss: { sid in
                             store.dismissSession(id: sid)
-                        })
+                        }, store: store)
                     }
                 }
             }
@@ -469,6 +469,7 @@ struct SessionGroup {
     let isLocal: Bool
     let project: String
     let gitBranch: String?
+    let cwd: String?
     let sessions: [SessionSnapshot]   // sorted: most recent first
 
     var aggregateActivity: SessionActivity {
@@ -491,6 +492,7 @@ func groupedSessions(_ sessions: [SessionSnapshot]) -> [SessionGroup] {
             isLocal: head.isLocal,
             project: head.project,
             gitBranch: head.gitBranch,
+            cwd: head.cwd,
             sessions: sorted
         )
     }
@@ -501,9 +503,24 @@ func groupedSessions(_ sessions: [SessionSnapshot]) -> [SessionGroup] {
     }
 }
 
+private struct GitStatusBadge: View {
+    let status: GitStatus
+
+    var body: some View {
+        HStack(spacing: 2) {
+            Text("+\(status.additions)")
+                .foregroundStyle(.green.opacity(0.9))
+            Text("-\(status.deletions)")
+                .foregroundStyle(.red.opacity(0.9))
+        }
+        .font(.system(size: 11, weight: .medium, design: .monospaced))
+    }
+}
+
 private struct ProjectCard: View {
     let group: SessionGroup
     let onDismiss: (_ sessionId: String) -> Void
+    @ObservedObject var store: SessionStore
     @ObservedObject private var nameStore = ProjectNameStore.shared
     @State private var isEditing = false
     @State private var editText = ""
@@ -555,14 +572,18 @@ private struct ProjectCard: View {
                 Spacer(minLength: 4)
 
                 if let branch = group.gitBranch {
-                    Label {
-                        Text(branch).lineLimit(1)
-                    } icon: {
+                    let gitStatus = AppSettings.shared.gitTrackingEnabled
+                        ? group.cwd.flatMap { store.gitStatusByPath[$0] }
+                        : nil
+                    HStack(spacing: 4) {
                         Image(systemName: "arrow.triangle.branch")
+                        Text(branch).lineLimit(1)
+                        if let gs = gitStatus, !gs.isEmpty {
+                            GitStatusBadge(status: gs)
+                        }
                     }
                     .font(.system(size: 12, design: .rounded))
                     .foregroundStyle(.white.opacity(0.65))
-                    .labelStyle(.titleAndIcon)
                 }
 
                 if group.sessions.count > 1 {

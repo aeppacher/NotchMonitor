@@ -105,7 +105,7 @@ enum JSONLParser {
                 if let m = message["model"] as? String { lastModel = m }
             }
             if let cwd = obj["cwd"] as? String { lastCwd = cwd }
-            if let br = obj["gitBranch"] as? String, !br.isEmpty { lastBranch = br }
+            if let br = obj["gitBranch"] as? String, !br.isEmpty, br != "HEAD" { lastBranch = br }
             // permissionMode is emitted on dedicated entries and also lives
             // on user-prompt entries; either source is fine.
             if entryType == "permission-mode", let m = obj["permissionMode"] as? String {
@@ -180,6 +180,7 @@ enum JSONLParser {
             lastAssistantPreview: lastAssistantPreview,
             model: lastModel,
             gitBranch: lastBranch,
+            cwd: lastCwd,
             contextTokens: lastContextTokens,
             modelContextLimit: contextLimit(
                 jsonlModel: lastModel,

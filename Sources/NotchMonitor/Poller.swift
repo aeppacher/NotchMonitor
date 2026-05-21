@@ -212,6 +212,33 @@ find "$DIR" -mindepth 2 -maxdepth 2 -type f -name '*.jsonl' -mmin "-$WINDOW_MIN"
     printf '===META=== %s %s\n' "$rel" "$mt"
   fi
 done
+
+# --- Git status per active session cwd ------------------------------------
+if [ "${GIT_TRACKING:-}" = "1" ]; then
+  find "$DIR" -mindepth 2 -maxdepth 2 -type f -name '*.jsonl' -mmin "-$WINDOW_MIN" 2>/dev/null | while read -r f; do
+    cwd=$(grep -o '"cwd":"[^"]*"' "$f" 2>/dev/null | tail -1 | sed 's/"cwd":"//;s/"$//')
+    [ -z "$cwd" ] && continue
+    [ -d "$cwd" ] || continue
+    [ -d "$cwd/.git" ] || git -C "$cwd" rev-parse --is-inside-work-tree >/dev/null 2>&1 || continue
+    adds=0; dels=0
+    stat=$(git -C "$cwd" diff --stat 2>/dev/null | tail -1)
+    if [ -n "$stat" ]; then
+      a=$(printf '%s' "$stat" | grep -o '[0-9]* insertion' | grep -o '[0-9]*')
+      d=$(printf '%s' "$stat" | grep -o '[0-9]* deletion' | grep -o '[0-9]*')
+      [ -n "$a" ] && adds=$a
+      [ -n "$d" ] && dels=$d
+    fi
+    # Include staged changes too
+    stat2=$(git -C "$cwd" diff --cached --stat 2>/dev/null | tail -1)
+    if [ -n "$stat2" ]; then
+      a2=$(printf '%s' "$stat2" | grep -o '[0-9]* insertion' | grep -o '[0-9]*')
+      d2=$(printf '%s' "$stat2" | grep -o '[0-9]* deletion' | grep -o '[0-9]*')
+      [ -n "$a2" ] && adds=$((adds + a2))
+      [ -n "$d2" ] && dels=$((dels + d2))
+    fi
+    printf '===GIT=== %s %s %s\n' "$cwd" "$adds" "$dels"
+  done
+fi
 """##
 
 final class Poller {
@@ -280,6 +307,7 @@ final class Poller {
         var perHostError: [String: String] = [:]
         var perHostState: [String: HostState] = [:]
         var perHostTotals: [String: DailyTotals] = [:]
+        var perHostGitStatus: [String: [String: GitStatus]] = [:]
 
         // Snapshot once per tick so all hosts use a consistent window even if
         // the user flips the setting mid-tick.
@@ -338,15 +366,17 @@ final class Poller {
                 // Quote because rels contain `-` and other shell-safe chars
                 // but never `'` (they're filesystem paths Claude Code wrote).
                 let clearEnv = clearMarkers ? "CLEAR_MARKERS=1 " : ""
-                let cmd = "\(clearEnv)KNOWN_MTIMES='\(known)' WINDOW_MIN=\(windowMinutes) " + remoteScript
+                let gitEnv = AppSettings.shared.gitTrackingEnabled ? "GIT_TRACKING=1 " : ""
+                let cmd = "\(clearEnv)\(gitEnv)KNOWN_MTIMES='\(known)' WINDOW_MIN=\(windowMinutes) " + remoteScript
                 // Generous: cold SSH connect to corp dev hosts can take 3-4s
                 // and the script does install + tail work on first run.
                 switch self.bridge.run(host: host, command: cmd, timeout: 25) {
                 case .success(let out):
-                    let (snaps, remoteState, totals) = self.parse(output: out, host: host, stalenessWindow: windowSeconds)
+                    let (snaps, remoteState, totals, gitStatuses) = self.parse(output: out, host: host, stalenessWindow: windowSeconds)
                     resultsLock.lock()
                     perHostSnapshots[host.alias] = snaps
                     perHostTotals[host.alias] = totals
+                    perHostGitStatus[host.alias] = gitStatuses
                     if host.isLocal {
                         perHostState[host.alias] = .localOk
                     } else if let rs = remoteState {
@@ -432,25 +462,36 @@ final class Poller {
             tokensLast24h: agg24Tokens
         )
 
+        // Merge git statuses from all hosts into a single dict.
+        var mergedGitStatus: [String: GitStatus] = [:]
+        for (_, statuses) in perHostGitStatus {
+            for (path, status) in statuses {
+                mergedGitStatus[path] = status
+            }
+        }
+
         let snapshots = allSnapshots
         let connected = anyConnected
         let err = lastErr
+        let gitStatus = mergedGitStatus
         DispatchQueue.main.async { [store] in
             store.update(
                 snapshots,
                 connected: connected,
                 error: err,
                 hosts: hostStatuses,
-                todayTotals: aggTotals
+                todayTotals: aggTotals,
+                gitStatus: gitStatus
             )
         }
     }
 
-    private func parse(output: String, host: DetectedHost, stalenessWindow: TimeInterval) -> ([SessionSnapshot], HostState?, DailyTotals) {
+    private func parse(output: String, host: DetectedHost, stalenessWindow: TimeInterval) -> ([SessionSnapshot], HostState?, DailyTotals, [String: GitStatus]) {
         var snapshots: [SessionSnapshot] = []
         var currentRel: String?
         var currentMTime: Date = Date()
         var buffer: [String] = []
+        var gitStatuses: [String: GitStatus] = [:]
 
         // Phases: AWAITING markers, then settings, then file blocks.
         var inSettings = false
@@ -525,6 +566,7 @@ final class Poller {
                     cacheCreationTokens: cachedSnap.cacheCreationTokens,
                     lastAssistantPreview: cachedSnap.lastAssistantPreview,
                     model: cachedSnap.model, gitBranch: cachedSnap.gitBranch,
+                    cwd: cachedSnap.cwd,
                     contextTokens: cachedSnap.contextTokens,
                     modelContextLimit: cachedSnap.modelContextLimit
                 )
@@ -557,6 +599,17 @@ final class Poller {
             }
             if line.hasPrefix("===DAILYALL=== ") {
                 dailyAll = Int(line.dropFirst("===DAILYALL=== ".count).trimmingCharacters(in: .whitespaces)) ?? 0
+                continue
+            }
+            if line.hasPrefix("===GIT=== ") {
+                let parts = line.dropFirst("===GIT=== ".count)
+                    .split(separator: " ")
+                if parts.count >= 3 {
+                    let cwd = String(parts[0..<(parts.count - 2)].joined(separator: " "))
+                    let additions = Int(parts[parts.count - 2]) ?? 0
+                    let deletions = Int(parts[parts.count - 1]) ?? 0
+                    gitStatuses[cwd] = GitStatus(additions: additions, deletions: deletions)
+                }
                 continue
             }
             if line.hasPrefix("===STATE=== ") {
@@ -639,7 +692,7 @@ final class Poller {
         inFlightLock.unlock()
 
         let hostTotals = DailyTotals(tokensAllTime: dailyAll, tokensLast24h: daily24)
-        return (snapshots, remoteState, hostTotals)
+        return (snapshots, remoteState, hostTotals, gitStatuses)
     }
 
     /// Pulls the top-level "model" field out of settings.json. Settings can be

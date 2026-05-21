@@ -60,6 +60,7 @@ struct SessionSnapshot: Identifiable, Equatable {
     // Latest-turn metadata (most recent assistant message wins)
     let model: String?              // raw id, e.g. "claude-opus-4-7"
     let gitBranch: String?
+    let cwd: String?                // working directory (for local git status)
     let contextTokens: Int          // size of latest prompt sent to Claude
     let modelContextLimit: Int      // model's window in tokens
 
@@ -117,6 +118,13 @@ struct DailyTotals: Equatable {
     let tokensLast24h: Int
 }
 
+struct GitStatus: Equatable {
+    let additions: Int
+    let deletions: Int
+
+    var isEmpty: Bool { additions == 0 && deletions == 0 }
+}
+
 final class SessionStore: ObservableObject {
     @Published var sessions: [SessionSnapshot] = []
     @Published var lastError: String?
@@ -124,6 +132,7 @@ final class SessionStore: ObservableObject {
     @Published var hasPolled: Bool = false
     @Published var hosts: [HostStatus] = []
     @Published var todayTotals: DailyTotals = DailyTotals(tokensAllTime: 0, tokensLast24h: 0)
+    @Published var gitStatusByPath: [String: GitStatus] = [:]
 
     /// Force an immediate poll across every host. Wired to the Poller in
     /// AppDelegate so the UI doesn't need to know about it directly.
@@ -155,7 +164,7 @@ final class SessionStore: ObservableObject {
         return sessions.filter { $0.activity.category == target }.count
     }
 
-    func update(_ snapshots: [SessionSnapshot], connected: Bool, error: String?, hosts: [HostStatus], todayTotals: DailyTotals) {
+    func update(_ snapshots: [SessionSnapshot], connected: Bool, error: String?, hosts: [HostStatus], todayTotals: DailyTotals, gitStatus: [String: GitStatus] = [:]) {
         self.todayTotals = todayTotals
         // Filter out dismissed sessions whose lastMessageAt hasn't advanced
         // past the moment the user dismissed them. Once an update arrives,
@@ -178,6 +187,7 @@ final class SessionStore: ObservableObject {
         self.lastError = error
         self.hasPolled = true
         self.hosts = hosts
+        self.gitStatusByPath = gitStatus
     }
 }
 

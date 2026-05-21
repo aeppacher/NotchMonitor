@@ -126,6 +126,17 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
+        let gitItem = NSMenuItem(
+            title: "Git Status Tracking",
+            action: #selector(toggleGitTracking(_:)),
+            keyEquivalent: ""
+        )
+        gitItem.target = self
+        gitItem.state = AppSettings.shared.gitTrackingEnabled ? .on : .off
+        menu.addItem(gitItem)
+
+        menu.addItem(NSMenuItem.separator())
+
         let toggle = NSMenuItem(
             title: "Start at Login",
             action: #selector(toggleLoginItem(_:)),
@@ -172,6 +183,10 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             let win = (item.representedObject as? Int).flatMap(ActivityWindow.init(rawValue:))
             item.state = (win == currentWindow) ? .on : .off
         }
+        // Refresh git tracking toggle.
+        if let gitItem = menu.items.first(where: { $0.action == #selector(toggleGitTracking(_:)) }) {
+            gitItem.state = AppSettings.shared.gitTrackingEnabled ? .on : .off
+        }
     }
 
     @objc private func setPlacement(_ sender: NSMenuItem) {
@@ -186,6 +201,12 @@ final class MenuBarController: NSObject, NSMenuDelegate {
               let win = ActivityWindow(rawValue: raw)
         else { return }
         AppSettings.shared.activityWindow = win
+    }
+
+    @objc private func toggleGitTracking(_ sender: NSMenuItem) {
+        let isOn = sender.state == .on
+        AppSettings.shared.gitTrackingEnabled = !isOn
+        sender.state = isOn ? .off : .on
     }
 
     // MARK: - Monitor Hosts submenu

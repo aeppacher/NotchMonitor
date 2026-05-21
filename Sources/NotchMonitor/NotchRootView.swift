@@ -476,6 +476,10 @@ struct SessionGroup {
     var aggregateActivity: SessionActivity {
         sessions.map(\.activity).max(by: { $0.priority < $1.priority }) ?? .idle
     }
+
+    var agents: Set<AgentKind> {
+        Set(sessions.map(\.agent))
+    }
 }
 
 func groupedSessions(_ sessions: [SessionSnapshot]) -> [SessionGroup] {
@@ -668,27 +672,63 @@ private struct SessionStatRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
-            // Line 1: model pill · state · ctx bar · ctx label
-            HStack(spacing: 10) {
-                Text(session.modelPretty)
+            // Row 1: model pill · message/token stats · trash
+            HStack(spacing: 8) {
+                Text("\(session.modelPretty) · \(session.agent.displayName)")
                     .font(.system(size: 12, weight: .medium, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.65))
+                    .foregroundStyle(.white.opacity(0.8))
                     .padding(.horizontal, 7)
                     .padding(.vertical, 2)
-                    .background(Capsule().fill(Color.white.opacity(0.08)))
+                    .background(Capsule().fill(session.agent.tintColor.opacity(0.15)))
 
-                Text(session.activity.label)
-                    .font(.system(size: 12, design: .rounded))
-                    .foregroundStyle(activityColor(session.activity))
-                    .lineLimit(1)
+                if let turns = session.turnCount {
+                    HStack(spacing: 3) {
+                        Image(systemName: "bubble.left.and.bubble.right").font(.system(size: 10))
+                        Text("\(turns)")
+                    }
+                    .help("Completed turns")
+                } else if session.totalTokens > 0 {
+                    HStack(spacing: 3) {
+                        Image(systemName: "arrow.up").font(.system(size: 10))
+                        Text(formatTokens(session.inputTokens))
+                    }
+                    .help("Input tokens")
+                    HStack(spacing: 3) {
+                        Image(systemName: "arrow.down").font(.system(size: 10))
+                        Text(formatTokens(session.outputTokens))
+                    }
+                    .help("Output tokens")
+                }
 
-                ContextBar(fraction: session.contextFraction)
-                    .frame(height: 5)
-                    .frame(maxWidth: .infinity)
+                if let dur = session.totalDurationSecs {
+                    HStack(spacing: 3) {
+                        Image(systemName: "brain").font(.system(size: 10))
+                        Text(formatDuration(dur))
+                    }
+                    .help("Total thinking time")
+                }
 
-                Text(contextLabel)
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.65))
+                if let tools = session.toolUseCount, tools > 0 {
+                    HStack(spacing: 3) {
+                        Image(systemName: "wrench").font(.system(size: 10))
+                        Text("\(tools)")
+                    }
+                    .help("Tool invocations")
+                }
+
+                Spacer(minLength: 4)
+
+                if let credits = session.credits {
+                    Text(String(format: "%.2f cred", credits))
+                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(.white.opacity(0.9))
+                        .help("Credits consumed this session")
+                } else if session.totalTokens > 0 {
+                    Text("\(formatTokens(session.totalTokens)) token")
+                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(.white.opacity(0.9))
+                        .help("Total tokens (in + out + cache)")
+                }
 
                 Button {
                     onDismiss(session.id)
@@ -700,47 +740,26 @@ private struct SessionStatRow: View {
                 .buttonStyle(.plain)
                 .help("Hide this session until it next updates")
             }
-
-            // Line 2: full token breakdown — input / output / cache-read /
-            // cache-write — matches what `/usage` reports.
-            HStack(spacing: 10) {
-                HStack(spacing: 3) {
-                    Image(systemName: "arrow.up").font(.system(size: 10))
-                    Text(formatTokens(session.inputTokens))
-                }
-                .help("Input tokens (fresh content sent this session)")
-
-                HStack(spacing: 3) {
-                    Image(systemName: "arrow.down").font(.system(size: 10))
-                    Text(formatTokens(session.outputTokens))
-                }
-                .help("Output tokens (Claude's responses)")
-
-                HStack(spacing: 2) {
-                    Image(systemName: "bolt.fill").font(.system(size: 10))
-                    Text("R").font(.system(size: 9, weight: .bold))
-                    Text(formatTokens(session.cacheReadTokens))
-                        .padding(.leading, 2)
-                }
-                .help("Cache reads (cheap, ~10% of input rate)")
-
-                HStack(spacing: 2) {
-                    Image(systemName: "bolt.fill").font(.system(size: 10))
-                    Text("W").font(.system(size: 9, weight: .bold))
-                    Text(formatTokens(session.cacheCreationTokens))
-                        .padding(.leading, 2)
-                }
-                .help("Cache writes (slightly above input rate)")
-
-                Spacer(minLength: 4)
-
-                Text(formatTokens(session.totalTokens))
-                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.9))
-                    .help("Total tokens used by this session (in + out + cache reads + cache writes)")
-            }
             .font(.system(size: 11, weight: .medium, design: .monospaced))
             .foregroundStyle(.white.opacity(0.65))
+
+            // Row 2: status · context bar
+            HStack(spacing: 10) {
+                if !activityLabel.isEmpty {
+                    Text(activityLabel)
+                        .font(.system(size: 12, design: .rounded))
+                        .foregroundStyle(activityColor(session.activity))
+                        .lineLimit(1)
+                }
+
+                ContextBar(fraction: session.contextFraction)
+                    .frame(height: 5)
+                    .frame(maxWidth: .infinity)
+
+                Text(contextLabel)
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.65))
+            }
 
             // Permission request panel
             if let req = permissionRequest {
@@ -753,6 +772,19 @@ private struct SessionStatRow: View {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(Color.white.opacity(0.04))
         )
+    }
+
+    private var activityLabel: String {
+        if session.agent == .kiro {
+            switch session.activity {
+            case .awaitingUser: return "Blocked"
+            default:            return "Ready"
+            }
+        }
+        switch session.activity {
+        case .idle: return "Ready"
+        default:    return session.activity.label
+        }
     }
 
     private var permissionRequest: PermissionRequest? {
@@ -843,5 +875,14 @@ private func formatTokens(_ n: Int) -> String {
     if n >= 1_000_000 { return String(format: "%.1fM", Double(n) / 1_000_000) }
     if n >= 1_000     { return String(format: "%.1fk", Double(n) / 1_000) }
     return "\(n)"
+}
+
+private func formatDuration(_ secs: Int) -> String {
+    if secs >= 3600 {
+        let m = (secs % 3600) / 60
+        return "\(secs / 3600)h\(m > 0 ? "\(m)m" : "")"
+    }
+    if secs >= 60 { return "\(secs / 60)m\(secs % 60 > 0 ? "\(secs % 60)s" : "")" }
+    return "\(secs)s"
 }
 

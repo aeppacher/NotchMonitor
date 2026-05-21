@@ -37,7 +37,7 @@ enum JSONLParser {
         )
     }
 
-    static func parse(sessionId: String, projectDir: String, host: DetectedHost, defaultModelHint: String?, awaitingPermission: Bool, lines: [String], fileMTime: Date) -> (SessionSnapshot, ActivityInputs)? {
+    static func parse(sessionId: String, projectDir: String, host: DetectedHost, defaultModelHint: String?, awaitingPermission: Bool, lines: [String], fileMTime: Date, agent: AgentKind = .claude) -> (SessionSnapshot, ActivityInputs)? {
         var inputTokens = 0
         var outputTokens = 0
         var cacheReadTokens = 0
@@ -170,6 +170,7 @@ enum JSONLParser {
             id: "\(host.alias)/\(sessionId)",
             host: host.alias,
             isLocal: host.isLocal,
+            agent: agent,
             project: project,
             activity: activity,
             lastMessageAt: lastEntryAt,
@@ -177,6 +178,10 @@ enum JSONLParser {
             outputTokens: outputTokens,
             cacheReadTokens: cacheReadTokens,
             cacheCreationTokens: cacheCreationTokens,
+            credits: nil,
+            turnCount: nil,
+            totalDurationSecs: nil,
+            toolUseCount: nil,
             lastAssistantPreview: lastAssistantPreview,
             model: lastModel,
             gitBranch: lastBranch,
@@ -272,7 +277,7 @@ enum JSONLParser {
     /// - assistant thinking/text mid-turn                                   → thinking
     /// - assistant + stop=end_turn                                          → idle (Claude finished, nothing pending)
     /// - user prompt with no assistant reply yet                            → thinking
-    fileprivate static func inferActivity(
+    static func inferActivity(
         lastEvent: LastEvent,
         lastEventAt: Date,
         permissionMode: String,

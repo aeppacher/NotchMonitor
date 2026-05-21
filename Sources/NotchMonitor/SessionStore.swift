@@ -1,5 +1,25 @@
 import Foundation
 import Combine
+import SwiftUI
+
+enum AgentKind: String, CaseIterable, Equatable {
+    case claude
+    case kiro
+
+    var displayName: String {
+        switch self {
+        case .claude: return "Claude"
+        case .kiro:   return "Kiro"
+        }
+    }
+
+    var tintColor: Color {
+        switch self {
+        case .claude: return .orange
+        case .kiro:   return .purple
+        }
+    }
+}
 
 enum SessionActivity: Equatable {
     case thinking                  // assistant streaming text/thinking mid-turn
@@ -48,6 +68,7 @@ struct SessionSnapshot: Identifiable, Equatable {
     let id: String          // session uuid (jsonl filename without extension)
     let host: String        // "local" or ssh alias
     let isLocal: Bool
+    let agent: AgentKind
     let project: String     // human-readable project name (cwd basename)
     let activity: SessionActivity
     let lastMessageAt: Date
@@ -55,6 +76,10 @@ struct SessionSnapshot: Identifiable, Equatable {
     let outputTokens: Int
     let cacheReadTokens: Int
     let cacheCreationTokens: Int
+    let credits: Double?            // Kiro uses credits instead of tokens
+    let turnCount: Int?             // Kiro: number of completed turns
+    let totalDurationSecs: Int?     // Kiro: cumulative turn duration
+    let toolUseCount: Int?          // Kiro: total tool invocations
     let lastAssistantPreview: String?
 
     // Latest-turn metadata (most recent assistant message wins)
@@ -71,17 +96,47 @@ struct SessionSnapshot: Identifiable, Equatable {
         return min(1.0, Double(contextTokens) / Double(modelContextLimit))
     }
 
-    /// Short pretty model name: "claude-opus-4-7" → "Opus 4.7"
+    /// Pretty model name from raw IDs like "claude-opus-4-7", "claude-opus-4.7-1m",
+    /// "minimax-m2.5", "deepseek-3.2", "qwen3-coder-480b", "auto", etc.
     var modelPretty: String {
         guard let m = model else { return "—" }
-        let lower = m.lowercased()
-        let family: String =
-            lower.contains("opus") ? "Opus" :
-            lower.contains("sonnet") ? "Sonnet" :
-            lower.contains("haiku") ? "Haiku" : m
-        // Pull "x-y" from the trailing digits (e.g. "4-7" → "4.7").
-        let digits = lower.split(separator: "-").suffix(2).joined(separator: ".")
-        return digits.isEmpty ? family : "\(family) \(digits)"
+        // Strip "-1m" suffix (context window indicator, not useful for display)
+        let cleaned = m.replacingOccurrences(of: "-1m", with: "")
+            .replacingOccurrences(of: "-1M", with: "")
+        let lower = cleaned.lowercased()
+
+        // Special case: "auto" mode
+        if lower == "auto" { return "Auto" }
+
+        // Claude models: extract family + version
+        if lower.contains("opus") || lower.contains("sonnet") || lower.contains("haiku") {
+            let family: String =
+                lower.contains("opus") ? "Opus" :
+                lower.contains("sonnet") ? "Sonnet" : "Haiku"
+            let parts = lower.split(separator: "-")
+            if let idx = parts.firstIndex(where: { $0.first?.isNumber == true }) {
+                let version = parts[idx...].joined(separator: ".")
+                return version.isEmpty ? family : "\(family) \(version)"
+            }
+            return family
+        }
+
+        // Generic models: capitalize each segment, treat first numeric as version.
+        // "minimax-m2.5" → "Minimax M2.5", "deepseek-3.2" → "Deepseek 3.2"
+        // "qwen3-coder-480b" → "Qwen3 Coder 480b", "glm-5" → "GLM 5"
+        let parts = cleaned.split(separator: "-")
+        let formatted = parts.map { segment -> String in
+            let s = String(segment)
+            // All-letter segments ≤4 chars that look like acronyms: uppercase
+            if s.count <= 4 && s.allSatisfy(\.isLetter) && s == s.lowercased() {
+                // Common acronyms
+                let acronyms: Set<String> = ["glm", "agi"]
+                if acronyms.contains(s) { return s.uppercased() }
+            }
+            // Capitalize first letter
+            return s.prefix(1).uppercased() + s.dropFirst()
+        }
+        return formatted.joined(separator: " ")
     }
 }
 
@@ -131,11 +186,19 @@ struct PermissionRequest: Equatable {
     let toolInput: [String: Any]
 
     var inputPreview: String {
-        if let cmd = toolInput["command"] as? String {
-            return String(cmd.prefix(120))
-        }
         if let path = toolInput["file_path"] as? String {
             return path
+        }
+        if let path = toolInput["path"] as? String {
+            return path
+        }
+        if let cmd = toolInput["command"] as? String {
+            // Kiro uses "command" for operation type (e.g. "insert"),
+            // Claude uses it for shell commands. Only show if it looks
+            // like a real command (longer than a single word).
+            if cmd.contains(" ") || cmd.contains("/") {
+                return String(cmd.prefix(120))
+            }
         }
         if let query = toolInput["query"] as? String {
             return String(query.prefix(120))
@@ -168,6 +231,7 @@ final class SessionStore: ObservableObject {
         sessions = sessions.map { s in
             SessionSnapshot(
                 id: s.id, host: s.host, isLocal: s.isLocal,
+                agent: s.agent,
                 project: s.project,
                 activity: .idle,
                 lastMessageAt: Date(),
@@ -175,6 +239,10 @@ final class SessionStore: ObservableObject {
                 outputTokens: s.outputTokens,
                 cacheReadTokens: s.cacheReadTokens,
                 cacheCreationTokens: s.cacheCreationTokens,
+                credits: s.credits,
+                turnCount: s.turnCount,
+                totalDurationSecs: s.totalDurationSecs,
+                toolUseCount: s.toolUseCount,
                 lastAssistantPreview: s.lastAssistantPreview,
                 model: s.model, gitBranch: s.gitBranch,
                 cwd: s.cwd,

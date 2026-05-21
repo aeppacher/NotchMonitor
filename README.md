@@ -7,21 +7,7 @@ locally and on remote machines you SSH into.
 
 ![Expanded](screenshots/expanded.png)
 
-## Install
 
-1. **Download** the latest `NotchMonitor.zip` from the
-   [GitHub releases page](https://github.com/aeppacher/NotchMonitor/releases/latest).
-2. **Unzip** it (Finder will do this automatically on most browsers).
-3. **Move** `NotchMonitor.app` to `/Applications`.
-4. **Clear quarantine and launch** — open Terminal and run:
-   ```sh
-   xattr -dr com.apple.quarantine /Applications/NotchMonitor.app
-   open /Applications/NotchMonitor.app
-   ```
-   Without the `xattr` step, Gatekeeper refuses to launch the unsigned bundle
-   and shows *"NotchMonitor can't be opened because it can't be verified."*
-   (This is a one-time gate — the in-app auto-updater handles quarantine on
-   future updates.) I am not paying Apple $99/yr to sign this.
 
 After first launch, look for a small dashed-rectangle icon in your menu bar.
 Click it for the menu:
@@ -242,3 +228,19 @@ existing hook configurations.
   than the top "Open at Login" list.
 - Token totals come from `usage` fields on assistant messages. If Claude
   Code changes its JSONL schema, this may need updating.
+
+  ## Install
+
+1. **Download** the latest `NotchMonitor.zip` from the
+   [GitHub releases page](https://github.com/aeppacher/NotchMonitor/releases/latest).
+2. **Unzip** it (Finder will do this automatically on most browsers).
+3. **Move** `NotchMonitor.app` to `/Applications`.
+4. **Clear quarantine and launch** — open Terminal and run:
+   ```sh
+   xattr -dr com.apple.quarantine /Applications/NotchMonitor.app
+   open /Applications/NotchMonitor.app
+   ```
+   Without the `xattr` step, Gatekeeper refuses to launch the unsigned bundle
+   and shows *"NotchMonitor can't be opened because it can't be verified."*
+   (This is a one-time gate — the in-app auto-updater handles quarantine on
+   future updates.) I am not paying Apple $99/yr to sign this.

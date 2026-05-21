@@ -240,6 +240,65 @@ if [ "${GIT_TRACKING:-}" = "1" ]; then
     printf '===GIT=== %s %s %s\n' "$cwd" "$adds" "$dels"
   done
 fi
+
+# --- Kiro CLI sessions ----------------------------------------------------
+KIRO_DIR="$HOME/.kiro/sessions/cli"
+if [ -d "$KIRO_DIR" ]; then
+  printf '===AGENT=== kiro\n'
+  find "$KIRO_DIR" -mindepth 1 -maxdepth 1 -type f -name '*.jsonl' -mmin "-$WINDOW_MIN" 2>/dev/null | while read -r f; do
+    mt=$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null)
+    bn=$(basename "$f")
+    rel="$bn"
+    cached_mt=""
+    case ":$KNOWN_MTIMES:" in
+      *":kiro/$rel=$mt:"*) cached_mt="$mt" ;;
+      *":kiro/$rel="*)
+        cached_mt=$(printf '%s' "$KNOWN_MTIMES" | tr ':' '\n' | grep -m1 "^kiro/$rel=" | cut -d= -f2)
+        ;;
+    esac
+    if [ -z "$cached_mt" ] || [ "$mt" -gt "$cached_mt" ]; then
+      printf '===FILE=== %s %s\n' "$rel" "$mt"
+      cat "$f"
+      # Extract companion JSON metadata
+      json_file="${f%.jsonl}.json"
+      if [ -f "$json_file" ]; then
+        printf '===COMPANION=== %s\n' "$rel"
+        python3 -c "
+import json, sys
+try:
+    with open(sys.argv[1]) as fh: data = json.load(fh)
+    ss = data.get('session_state', {})
+    rts = ss.get('rts_model_state', {})
+    mi = rts.get('model_info', {})
+    cm = ss.get('conversation_metadata', {})
+    turns = cm.get('user_turn_metadatas', [])
+    inp = sum(t.get('input_token_count', 0) or 0 for t in turns)
+    out = sum(t.get('output_token_count', 0) or 0 for t in turns)
+    ctx_pct = rts.get('context_usage_percentage', 0) or 0
+    credits = sum(mu.get('value', 0) for t in turns for mu in t.get('metering_usage', []))
+    total_dur = sum(t.get('turn_duration', {}).get('secs', 0) for t in turns)
+    tool_uses = sum(t.get('builtin_tool_uses', 0) for t in turns)
+    print(json.dumps({
+        'cwd': data.get('cwd', ''),
+        'model': mi.get('model_name', ''),
+        'context_window': mi.get('context_window_tokens', 0) or 0,
+        'context_pct': ctx_pct,
+        'input_tokens': inp,
+        'output_tokens': out,
+        'credits': credits,
+        'completed_turns': len(turns),
+        'total_duration': total_dur,
+        'tool_uses': tool_uses,
+        'updated_at': data.get('updated_at', ''),
+    }))
+except: pass
+" "$json_file" 2>/dev/null
+      fi
+    else
+      printf '===META=== %s %s\n' "$rel" "$mt"
+    fi
+  done
+fi
 """##
 
 final class Poller {
@@ -288,6 +347,8 @@ final class Poller {
         let snapshot: SessionSnapshot
         let inputs: JSONLParser.ActivityInputs
         let mtime: TimeInterval
+        let agent: AgentKind
+        let permissionRequest: PermissionRequest?
     }
     private var fileCache: [String: [String: CachedSnapshot]] = [:]   // host.alias -> rel -> entry
 
@@ -514,6 +575,12 @@ final class Poller {
         var awaitingSessionMarkers: [String: Date] = [:]  // session_id -> marker mtime
         var remoteState: HostState?
 
+        // Multi-agent: track which agent's files we're currently parsing.
+        var currentAgent: AgentKind = .claude
+        // Companion JSON buffer for Kiro (and future agents that need it).
+        var companionBuffers: [String: String] = [:]  // rel -> json string
+        var inCompanion: String? = nil  // rel currently buffering companion for
+        var companionBuffer = ""
 
         // Cache subtree we'll mutate as we go.
         var hostFileCache = fileCache[host.alias] ?? [:]
@@ -525,41 +592,67 @@ final class Poller {
             return awaitingSessionMarkers[sid] != nil
         }
 
+        func cacheKey(agent: AgentKind, rel: String) -> String {
+            agent == .claude ? rel : "\(agent.rawValue)/\(rel)"
+        }
+
         func parseAndAppend(rel: String, mtime: Date, lines: [String]) {
-            let parts = rel.split(separator: "/", maxSplits: 1).map(String.init)
-            guard parts.count == 2 else { return }
-            let projectDir = parts[0]
-            let sessionId = parts[1].replacingOccurrences(of: ".jsonl", with: "")
-            guard let (snap, inputs) = JSONLParser.parse(
+            let key = cacheKey(agent: currentAgent, rel: rel)
+            let provider = AgentProviders.provider(for: currentAgent)
+
+            let sessionId: String
+            let projectDir: String
+            if currentAgent == .claude {
+                let parts = rel.split(separator: "/", maxSplits: 1).map(String.init)
+                guard parts.count == 2 else { return }
+                projectDir = parts[0]
+                sessionId = parts[1].replacingOccurrences(of: ".jsonl", with: "")
+            } else {
+                projectDir = ""
+                sessionId = rel.replacingOccurrences(of: ".jsonl", with: "")
+            }
+
+            let companion = companionBuffers[rel]
+            guard let (snap, inputs, permReq) = provider.parse(
                 sessionId: sessionId,
                 projectDir: projectDir,
                 host: host,
                 defaultModelHint: defaultModelHint,
                 awaitingPermission: awaiting(for: sessionId, fileMTime: mtime),
                 lines: lines,
-                fileMTime: mtime
+                fileMTime: mtime,
+                companionJSON: companion
             ) else { return }
             if Date().timeIntervalSince(snap.lastMessageAt) <= stalenessWindow {
                 snapshots.append(snap)
-                hostFileCache[rel] = CachedSnapshot(
+                hostFileCache[key] = CachedSnapshot(
                     snapshot: snap,
                     inputs: inputs,
-                    mtime: mtime.timeIntervalSince1970
+                    mtime: mtime.timeIntervalSince1970,
+                    agent: currentAgent,
+                    permissionRequest: permReq
                 )
-                seenKeys.insert(rel)
+                seenKeys.insert(key)
+                if let req = permReq {
+                    let permKey = currentAgent == .claude ? sessionId : "\(currentAgent.rawValue)-\(sessionId)"
+                    permRequests[permKey] = req
+                }
             }
         }
 
         func reuseCached(rel: String, mtime: Date) {
-            guard let cached = hostFileCache[rel] else { return }
-            let parts = rel.split(separator: "/", maxSplits: 1).map(String.init)
-            guard parts.count == 2 else { return }
-            let sessionId = parts[1].replacingOccurrences(of: ".jsonl", with: "")
-            // Always recompute activity. Two reasons:
-            //   1. Awaiting flag can flip between polls without mtime change.
-            //   2. Time-decay states (`.justFinished` → `.idle` after 60s)
-            //      need the current `Date()` to evaluate.
-            let recomputed = JSONLParser.recomputeActivity(
+            let key = cacheKey(agent: currentAgent, rel: rel)
+            guard let cached = hostFileCache[key] else { return }
+            let sessionId: String
+            if cached.agent == .claude {
+                let parts = rel.split(separator: "/", maxSplits: 1).map(String.init)
+                guard parts.count == 2 else { return }
+                sessionId = parts[1].replacingOccurrences(of: ".jsonl", with: "")
+            } else {
+                sessionId = rel.replacingOccurrences(of: ".jsonl", with: "")
+            }
+            let provider = AgentProviders.provider(for: cached.agent)
+            let recomputed = provider.recomputeActivity(
                 inputs: cached.inputs,
                 awaitingPermission: awaiting(for: sessionId, fileMTime: mtime)
             )
@@ -567,6 +660,7 @@ final class Poller {
             let snap: SessionSnapshot = (recomputed == cachedSnap.activity) ? cachedSnap :
                 SessionSnapshot(
                     id: cachedSnap.id, host: cachedSnap.host, isLocal: cachedSnap.isLocal,
+                    agent: cachedSnap.agent,
                     project: cachedSnap.project,
                     activity: recomputed,
                     lastMessageAt: cachedSnap.lastMessageAt,
@@ -574,6 +668,10 @@ final class Poller {
                     outputTokens: cachedSnap.outputTokens,
                     cacheReadTokens: cachedSnap.cacheReadTokens,
                     cacheCreationTokens: cachedSnap.cacheCreationTokens,
+                    credits: cachedSnap.credits,
+                    turnCount: cachedSnap.turnCount,
+                    totalDurationSecs: cachedSnap.totalDurationSecs,
+                    toolUseCount: cachedSnap.toolUseCount,
                     lastAssistantPreview: cachedSnap.lastAssistantPreview,
                     model: cachedSnap.model, gitBranch: cachedSnap.gitBranch,
                     cwd: cachedSnap.cwd,
@@ -582,18 +680,31 @@ final class Poller {
                 )
             if Date().timeIntervalSince(snap.lastMessageAt) <= stalenessWindow {
                 snapshots.append(snap)
-                // Refresh the cache so future ticks see the current activity
-                // without recomputing more than once per tick.
-                hostFileCache[rel] = CachedSnapshot(
+                hostFileCache[key] = CachedSnapshot(
                     snapshot: snap,
                     inputs: cached.inputs,
-                    mtime: cached.mtime
+                    mtime: cached.mtime,
+                    agent: cached.agent,
+                    permissionRequest: cached.permissionRequest
                 )
-                seenKeys.insert(rel)
+                seenKeys.insert(key)
+                if snap.activity == .awaitingUser, let req = cached.permissionRequest {
+                    let permKey = cached.agent == .claude ? sessionId : "\(cached.agent.rawValue)-\(sessionId)"
+                    permRequests[permKey] = req
+                }
+            }
+        }
+
+        func flushCompanion() {
+            if let rel = inCompanion {
+                companionBuffers[rel] = companionBuffer.trimmingCharacters(in: .whitespacesAndNewlines)
+                companionBuffer = ""
+                inCompanion = nil
             }
         }
 
         func flushFileBlock() {
+            flushCompanion()
             guard let rel = currentRel else { return }
             parseAndAppend(rel: rel, mtime: currentMTime, lines: buffer)
             buffer.removeAll(keepingCapacity: true)
@@ -610,6 +721,30 @@ final class Poller {
             if line.hasPrefix("===DAILYALL=== ") {
                 dailyAll = Int(line.dropFirst("===DAILYALL=== ".count).trimmingCharacters(in: .whitespaces)) ?? 0
                 continue
+            }
+            if line.hasPrefix("===AGENT=== ") {
+                flushFileBlock()
+                let name = String(line.dropFirst("===AGENT=== ".count))
+                    .trimmingCharacters(in: .whitespaces)
+                if let a = AgentKind(rawValue: name) {
+                    currentAgent = a
+                }
+                continue
+            }
+            if line.hasPrefix("===COMPANION=== ") {
+                flushCompanion()
+                let rel = String(line.dropFirst("===COMPANION=== ".count))
+                    .trimmingCharacters(in: .whitespaces)
+                inCompanion = rel
+                continue
+            }
+            if inCompanion != nil && !line.hasPrefix("===") {
+                companionBuffer.append(String(line))
+                companionBuffer.append("\n")
+                continue
+            }
+            if inCompanion != nil && line.hasPrefix("===") {
+                flushCompanion()
             }
             if line.hasPrefix("===GIT=== ") {
                 let parts = line.dropFirst("===GIT=== ".count)

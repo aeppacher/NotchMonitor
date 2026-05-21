@@ -89,7 +89,7 @@ final class AppSettings {
 
     var gitTrackingEnabled: Bool {
         get {
-            if UserDefaults.standard.object(forKey: gitTrackingKey) == nil { return true }
+            if UserDefaults.standard.object(forKey: gitTrackingKey) == nil { return false }
             return UserDefaults.standard.bool(forKey: gitTrackingKey)
         }
         set {

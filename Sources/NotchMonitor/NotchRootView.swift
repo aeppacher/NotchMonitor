@@ -672,22 +672,54 @@ private struct SessionStatRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
-            // Row 1: model pill · message/token stats · trash
+            // Row 1: [Agent] Model Status ████ctx████ ctx-label
             HStack(spacing: 8) {
-                Text("\(session.modelPretty) · \(session.agent.displayName)")
-                    .font(.system(size: 12, weight: .medium, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.8))
+                Text("\(session.agent.displayName) · \(session.modelPretty)")
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white)
                     .padding(.horizontal, 7)
                     .padding(.vertical, 2)
-                    .background(Capsule().fill(session.agent.tintColor.opacity(0.15)))
+                    .background(Capsule().fill(session.agent.tintColor.opacity(0.2)))
 
+                Text(activityLabel)
+                    .font(.system(size: 12, design: .rounded))
+                    .foregroundStyle(activityColor(session.activity))
+                    .lineLimit(1)
+
+                ContextBar(fraction: session.contextFraction)
+                    .frame(height: 5)
+                    .frame(maxWidth: .infinity)
+
+                Text(contextLabel)
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.5))
+            }
+
+            // Row 2: stats ··· total cost · dismiss
+            HStack(spacing: 10) {
                 if let turns = session.turnCount {
                     HStack(spacing: 3) {
                         Image(systemName: "bubble.left.and.bubble.right").font(.system(size: 10))
                         Text("\(turns)")
                     }
                     .help("Completed turns")
-                } else if session.totalTokens > 0 {
+                }
+                if let dur = session.totalDurationSecs {
+                    HStack(spacing: 3) {
+                        Image(systemName: "brain").font(.system(size: 10))
+                        Text(formatDuration(dur))
+                    }
+                    .help("Total thinking time")
+                }
+                if let tools = session.toolUseCount, tools > 0 {
+                    HStack(spacing: 3) {
+                        Image(systemName: "wrench").font(.system(size: 10))
+                        Text("\(tools)")
+                    }
+                    .help("Tool invocations")
+                }
+
+                if session.totalTokens > 0 {
                     HStack(spacing: 3) {
                         Image(systemName: "arrow.up").font(.system(size: 10))
                         Text(formatTokens(session.inputTokens))
@@ -698,34 +730,30 @@ private struct SessionStatRow: View {
                         Text(formatTokens(session.outputTokens))
                     }
                     .help("Output tokens")
-                }
-
-                if let dur = session.totalDurationSecs {
-                    HStack(spacing: 3) {
-                        Image(systemName: "brain").font(.system(size: 10))
-                        Text(formatDuration(dur))
+                    HStack(spacing: 2) {
+                        Image(systemName: "bolt.fill").font(.system(size: 9))
+                        Text("R").font(.system(size: 9, weight: .bold))
+                        Text(formatTokens(session.cacheReadTokens))
                     }
-                    .help("Total thinking time")
-                }
-
-                if let tools = session.toolUseCount, tools > 0 {
-                    HStack(spacing: 3) {
-                        Image(systemName: "wrench").font(.system(size: 10))
-                        Text("\(tools)")
+                    .help("Cache reads")
+                    HStack(spacing: 2) {
+                        Image(systemName: "bolt.fill").font(.system(size: 9))
+                        Text("W").font(.system(size: 9, weight: .bold))
+                        Text(formatTokens(session.cacheCreationTokens))
                     }
-                    .help("Tool invocations")
+                    .help("Cache writes")
                 }
 
                 Spacer(minLength: 4)
 
                 if let credits = session.credits {
                     Text(String(format: "%.2f cred", credits))
-                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
                         .foregroundStyle(.white.opacity(0.9))
                         .help("Credits consumed this session")
                 } else if session.totalTokens > 0 {
-                    Text("\(formatTokens(session.totalTokens)) token")
-                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    Text("\(formatTokens(session.totalTokens)) tok")
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
                         .foregroundStyle(.white.opacity(0.9))
                         .help("Total tokens (in + out + cache)")
                 }
@@ -735,31 +763,13 @@ private struct SessionStatRow: View {
                 } label: {
                     Image(systemName: "trash")
                         .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.6))
+                        .foregroundStyle(.white.opacity(0.5))
                 }
                 .buttonStyle(.plain)
                 .help("Hide this session until it next updates")
             }
             .font(.system(size: 11, weight: .medium, design: .monospaced))
-            .foregroundStyle(.white.opacity(0.65))
-
-            // Row 2: status · context bar
-            HStack(spacing: 10) {
-                if !activityLabel.isEmpty {
-                    Text(activityLabel)
-                        .font(.system(size: 12, design: .rounded))
-                        .foregroundStyle(activityColor(session.activity))
-                        .lineLimit(1)
-                }
-
-                ContextBar(fraction: session.contextFraction)
-                    .frame(height: 5)
-                    .frame(maxWidth: .infinity)
-
-                Text(contextLabel)
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.65))
-            }
+            .foregroundStyle(.white.opacity(0.55))
 
             // Permission request panel
             if let req = permissionRequest {
